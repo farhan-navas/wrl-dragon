@@ -37,7 +37,7 @@ def _query_api(system: str, prompt: str, max_tokens: int = 1024) -> str:
 def _query_cli(system: str, prompt: str, max_tokens: int = 1024) -> str:
     full_prompt = f"System: {system}\n\n{prompt}"
     result = subprocess.run(
-        ["claude", "-p", full_prompt, "--no-input"],
+        ["claude", "-p", full_prompt, "--no-session-persistence"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -166,10 +166,11 @@ class CEOOrchestrator:
         prompt += (
             "Write a Python function `select_action(obs: list[float]) -> int` that picks "
             "the best action given an observation vector. The function must be self-contained "
-            "(no external imports beyond math/random, no global state, no classes). "
+            "(no global state, no classes). You may import any standard library or common packages "
+            "(math, random, numpy, etc.) — put all imports at the top of the code. "
             "It receives the raw observation list and returns an integer action index. "
             "Use your knowledge of the environment dynamics to write a heuristic policy. "
-            "Output ONLY the Python function, no explanation, no markdown fences."
+            "Output ONLY the Python code (imports + function), no explanation, no markdown fences."
             + self._memory_context()
         )
 

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.logging.orchestrator_log import log_error, log_phase
 from src.orchestrator.ceo import DEFAULT_ENVS, CEOOrchestrator
-from src.rollouts.executor import run_episodes
+from src.rollouts.executor import _get_num_actions, run_episodes
 
 BASE_PORT = 8001
 
@@ -80,6 +80,12 @@ def main(
     # Start one server per env
     env_ports: dict[str, int] = {}
     server_procs: list[subprocess.Popen] = []
+
+    # Pre-warm gym action space cache on main thread (gymnasium imports aren't thread-safe)
+    print("Pre-loading gym environments...")
+    for env_name in envs:
+        n = _get_num_actions(env_name)
+        print(f"  {env_name}: {n} actions")
 
     print("Starting env servers...")
     for i, env_name in enumerate(envs):
