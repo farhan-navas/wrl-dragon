@@ -9,7 +9,7 @@ from src.orchestrator.ceo import CEOOrchestrator
 from src.rollouts.executor import run_episodes
 
 
-def main(env_name: str = "CartPole-v1", rounds: int = 2, episodes_per_round: int = 5):
+def main(env_name: str = "CartPole-v1", rounds: int = 2, episodes_per_round: int = 5, mode: str = "auto"):
     print(f"=== WRL-Dragon Orchestrator ===")
     print(f"Environment: {env_name}")
     print(f"Rounds: {rounds}, Episodes/round: {episodes_per_round}\n")
@@ -25,7 +25,7 @@ def main(env_name: str = "CartPole-v1", rounds: int = 2, episodes_per_round: int
     time.sleep(2)  # Wait for server startup
 
     try:
-        ceo = CEOOrchestrator(env_name=env_name)
+        ceo = CEOOrchestrator(env_name=env_name, mode=mode)
         ceo.spawn_agents()
 
         all_results = []
@@ -68,5 +68,8 @@ if __name__ == "__main__":
     parser.add_argument("--env", default="CartPole-v1")
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--episodes", type=int, default=5)
+    parser.add_argument("--mode", choices=["auto", "api", "cli"], default="auto",
+                        help="auto: use API key if set, else Claude Code CLI. "
+                             "api: require ANTHROPIC_API_KEY. cli: use 'claude -p' (subscription).")
     args = parser.parse_args()
-    main(env_name=args.env, rounds=args.rounds, episodes_per_round=args.episodes)
+    main(env_name=args.env, rounds=args.rounds, episodes_per_round=args.episodes, mode=args.mode)

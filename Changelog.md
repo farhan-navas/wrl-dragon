@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.1] - 2026-03-07
+
+### Changed
+
+- **Orchestrator now supports Claude Code CLI** (`--mode cli`) for users without an API key
+  - `auto` (default): uses API key if `ANTHROPIC_API_KEY` is set, otherwise falls back to `claude -p` CLI
+  - `api`: requires `ANTHROPIC_API_KEY`
+  - `cli`: uses Claude Code CLI subscription (no API key needed)
+- `anthropic` SDK is now lazily imported (only when `--mode api` is used)
+
 ## [0.2.0] - 2026-03-07
 
 ### Added

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-
-import anthropic
+import subprocess
 
 from src.logging.events import Event, emit_event_sync
 from src.orchestrator.agents import (
@@ -14,12 +13,49 @@ from src.orchestrator.agents import (
 )
 
 
+def _query_api(system: str, prompt: str, max_tokens: int = 1024) -> str:
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text
+
+
+def _query_cli(system: str, prompt: str, max_tokens: int = 1024) -> str:
+    full_prompt = f"System: {system}\n\n{prompt}"
+    result = subprocess.run(
+        ["claude", "-p", full_prompt, "--no-input"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"claude CLI failed: {result.stderr}")
+    return result.stdout.strip()
+
+
 class CEOOrchestrator:
-    def __init__(self, env_name: str = "CartPole-v1"):
+    def __init__(self, env_name: str = "CartPole-v1", mode: str = "auto"):
         self.env_name = env_name
-        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
         self.agents: dict[str, dict] = {}
         self.round = 0
+
+        if mode == "auto":
+            self.mode = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
+        else:
+            self.mode = mode
+
+        print(f"Orchestrator mode: {self.mode}")
+
+    def _query(self, system: str, prompt: str, max_tokens: int = 1024) -> str:
+        if self.mode == "api":
+            return _query_api(system, prompt, max_tokens)
+        return _query_cli(system, prompt, max_tokens)
 
     def spawn_agents(self):
         # Register CEO
@@ -70,14 +106,7 @@ class CEOOrchestrator:
             "each with 'agent_id', 'action', 'details'."
         )
 
-        response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            system=CEO_AGENT["system_prompt"],
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        plan_text = response.content[0].text
+        plan_text = self._query(CEO_AGENT["system_prompt"], prompt)
         print(f"CEO Plan (round {self.round}):\n{plan_text}\n")
         return plan_text
 
@@ -93,34 +122,23 @@ class CEOOrchestrator:
         coder = make_coder_agent(self.env_name)
         self.assign_task(CEO_AGENT["id"], coder["id"], task)
 
-        response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+        code = self._query(
+            coder["system_prompt"],
+            f"Environment: {self.env_name}. Task: {task}. "
+            "Write a reward shaping function in Python. "
+            "Output only the function code.",
             max_tokens=2048,
-            system=coder["system_prompt"],
-            messages=[{"role": "user", "content": (
-                f"Environment: {self.env_name}. Task: {task}. "
-                "Write a reward shaping function in Python. "
-                "Output only the function code."
-            )}],
         )
-
-        code = response.content[0].text
         print(f"Coder output:\n{code}\n")
         return code
 
     def run_analyst_review(self, rollout_results: list[dict]) -> str:
-        response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            system=ANALYST_AGENT["system_prompt"],
-            messages=[{"role": "user", "content": (
-                f"Review these rollout results for {self.env_name}:\n"
-                f"{json.dumps(rollout_results, indent=2)}\n"
-                "Analyze performance and suggest improvements."
-            )}],
+        analysis = self._query(
+            ANALYST_AGENT["system_prompt"],
+            f"Review these rollout results for {self.env_name}:\n"
+            f"{json.dumps(rollout_results, indent=2)}\n"
+            "Analyze performance and suggest improvements.",
         )
-
-        analysis = response.content[0].text
         print(f"Analyst review:\n{analysis}\n")
         return analysis
 

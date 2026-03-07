@@ -116,10 +116,19 @@ python -m src.rollouts.recorder
 
 ### 5. Full Orchestration (end-to-end)
 
-Runs the complete CEO orchestration loop: spawns agents, plans via Claude API, generates reward functions, runs rollouts, and analyzes results.
+Runs the complete CEO orchestration loop: spawns agents, plans via Claude, generates reward functions, runs rollouts, and analyzes results.
+
+The orchestrator supports two modes:
 
 ```bash
+# Auto-detect: uses API key if ANTHROPIC_API_KEY is set, otherwise uses Claude Code CLI
 python -m src.orchestrator.runner --env CartPole-v1 --rounds 2 --episodes 5
+
+# Explicit: use Claude Code CLI (subscription, no API key needed)
+python -m src.orchestrator.runner --mode cli
+
+# Explicit: use Anthropic API (requires ANTHROPIC_API_KEY in .env)
+python -m src.orchestrator.runner --mode api
 ```
 
 This automatically:
