@@ -37,7 +37,7 @@ def _query_api(system: str, prompt: str, max_tokens: int = 1024) -> str:
 def _query_cli(system: str, prompt: str, max_tokens: int = 1024) -> str:
     full_prompt = f"System: {system}\n\n{prompt}"
     result = subprocess.run(
-        ["claude", "-p", full_prompt, "--no-input"],
+        ["claude", "-p", full_prompt, "--no-session-persistence"],
         capture_output=True,
         text=True,
         timeout=120,
