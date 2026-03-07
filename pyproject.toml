@@ -1,27 +1,26 @@
 [project]
 name = "wrl-dragon"
 version = "0.1.0"
-description = "3D world RL environment using World Labs Marble API and OpenEnv"
+description = "RL orchestrator using Claude Code to coordinate sub-agents on OpenEnv environments"
 requires-python = ">=3.10"
 dependencies = [
     # OpenEnv core
     "openenv @ git+https://github.com/meta-pytorch/OpenEnv.git",
 
-    # World Labs API
-    "requests>=2.25.0",
-    "httpx>=0.27.0",
+    # Claude API (orchestrator)
+    "anthropic>=0.40.0",
 
-    # RL / LLM
-    "gymnasium>=1.0.0",
-    "numpy>=1.26.0",
-
-    # Web observability
+    # Web dashboard
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "websockets>=12.0",
     "jinja2>=3.1.0",
 
-    # Utilities
+    # RL / metrics
+    "gymnasium>=1.0.0",
+    "numpy>=1.26.0",
+
+    # Logging & video
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
 ]
@@ -31,10 +30,10 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.4.0",
 ]
-vlm = [
-    # Phase 2: multimodal
-    "pillow>=10.0.0",
-    "transformers>=4.40.0",
+phase2 = [
+    # Phase 2: RL meta-training
+    "torch>=2.2.0",
+    "trl>=0.12.0",
 ]
 
 [build-system]
