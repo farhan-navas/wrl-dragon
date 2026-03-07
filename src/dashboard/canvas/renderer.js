@@ -11,6 +11,7 @@ const Renderer = {
         this.ctx = this.canvas.getContext("2d");
         this.canvas.width = Layout.canvas.width;
         this.canvas.height = Layout.canvas.height;
+        this.ctx.imageSmoothingEnabled = false;
 
         // Click handler
         this.canvas.addEventListener("click", (e) => {
@@ -137,12 +138,15 @@ const Renderer = {
             ctx.strokeStyle = `rgba(255, 255, 107, ${alpha})`;
             ctx.lineWidth = 2;
             ctx.setLineDash([4, 4]);
+            // Connect from agent center (sprite is 48px tall, bottom at position.y)
+            const fromY = fromAgent.position.y - 24;
+            const toY = toAgent.position.y - 24;
             ctx.beginPath();
-            ctx.moveTo(fromAgent.position.x, fromAgent.position.y + 12);
+            ctx.moveTo(fromAgent.position.x, fromY);
 
             // Animated endpoint
             const endX = fromAgent.position.x + (toAgent.position.x - fromAgent.position.x) * progress;
-            const endY = fromAgent.position.y + 12 + (toAgent.position.y + 12 - fromAgent.position.y - 12) * progress;
+            const endY = fromY + (toY - fromY) * progress;
             ctx.lineTo(endX, endY);
             ctx.stroke();
             ctx.setLineDash([]);

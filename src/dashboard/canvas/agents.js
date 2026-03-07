@@ -1,95 +1,100 @@
-// Pixel-art agent characters with animation states
+// Pixel Agents-style character sprites with animation states
+// Based on pablodelucca/pixel-agents (Metro City character pack)
 const AgentSprites = {
-    colors: {
-        ceo: { body: "#ff6b6b", head: "#ffaaaa" },
-        coder: { body: "#6bb5ff", head: "#aad4ff" },
-        qa: { body: "#6bff6b", head: "#aaffaa" },
+    // Tier to palette index: CEO/Analyst -> 0/1, Coder -> 2/3, QA -> 4/5
+    tierPalette: {
+        ceo: 0,
+        coder: 2,
+        qa: 4,
     },
 
-    animations: {
-        idle: { frames: 2, speed: 800 },
-        thinking: { frames: 4, speed: 400 },
-        coding: { frames: 3, speed: 200 },
-        running: { frames: 4, speed: 150 },
-        assigning: { frames: 3, speed: 300 },
-        reporting: { frames: 2, speed: 500 },
+    scale: 2,
+
+    // animState -> { mode: 'walk'|'typing'|'reading', frames: N, speed: ms }
+    animConfig: {
+        idle: { mode: "walk", frameIdx: 1, frames: 2, speed: 800 },
+        thinking: { mode: "reading", frames: 2, speed: 400 },
+        coding: { mode: "typing", frames: 2, speed: 200 },
+        running: { mode: "walk", frames: 4, speed: 150 },
+        assigning: { mode: "typing", frames: 2, speed: 300 },
+        reporting: { mode: "typing", frames: 2, speed: 500 },
+    },
+
+    getPaletteIndex(agent) {
+        const tier = agent.tier || "qa";
+        const base = this.tierPalette[tier] ?? this.tierPalette.qa;
+        // Analyst uses palette 1 for variety
+        if (tier === "ceo" && (agent.displayName || agent.name || "").toLowerCase().includes("analyst")) {
+            return 1;
+        }
+        return base;
+    },
+
+    getSprite(agent, timestamp) {
+        const paletteIdx = this.getPaletteIndex(agent);
+        const animState = agent.animState || "idle";
+        const config = this.animConfig[animState] || this.animConfig.idle;
+
+        let frame;
+        if (config.frameIdx !== undefined) {
+            frame = config.frameIdx;
+        } else {
+            const frameCount = config.frames || 2;
+            const speed = config.speed || 400;
+            frame = Math.floor(timestamp / speed) % frameCount;
+        }
+
+        if (typeof CharacterPngSprites === "undefined") return null;
+        return CharacterPngSprites.getFrame(paletteIdx, config.mode, frame);
     },
 
     drawAgent(ctx, agent, timestamp) {
         const pos = agent.position;
         if (!pos) return;
 
-        const tier = agent.tier || "qa";
-        const colors = this.colors[tier] || this.colors.qa;
-        const anim = this.animations[agent.animState || "idle"];
-        const frame = Math.floor(timestamp / anim.speed) % anim.frames;
+        const sprite = this.getSprite(agent, timestamp);
+        if (!sprite) return;
 
-        const x = pos.x;
-        const y = pos.y;
+        const s = this.scale;
+        const w = sprite.sw * s;
+        const h = sprite.sh * s;
+        const x = pos.x - w / 2;
+        const y = pos.y - h;
 
         // Shadow
         ctx.fillStyle = "rgba(0,0,0,0.3)";
-        ctx.fillRect(x - 6, y + 12, 12, 3);
+        ctx.fillRect(pos.x - 8, pos.y + 4, 16, 4);
 
-        // Body (bounces slightly on active animations)
-        const bounce = (agent.animState === "idle") ? 0 : Math.sin(frame * Math.PI / anim.frames) * 2;
+        // PNG sprite (anchor bottom-center)
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(
+            sprite.image,
+            sprite.sx,
+            sprite.sy,
+            sprite.sw,
+            sprite.sh,
+            Math.round(x),
+            Math.round(y),
+            Math.round(w),
+            Math.round(h)
+        );
 
-        // Legs
-        ctx.fillStyle = "#333";
-        ctx.fillRect(x - 4, y + 6, 3, 6);
-        ctx.fillRect(x + 1, y + 6, 3, 6);
-
-        // Body
-        ctx.fillStyle = colors.body;
-        ctx.fillRect(x - 5, y - 2 - bounce, 10, 10);
-
-        // Head
-        ctx.fillStyle = colors.head;
-        ctx.fillRect(x - 4, y - 9 - bounce, 8, 8);
-
-        // Eyes
-        ctx.fillStyle = "#111";
-        const blink = (frame === 0 && Math.random() > 0.7);
-        if (!blink) {
-            ctx.fillRect(x - 2, y - 6 - bounce, 2, 2);
-            ctx.fillRect(x + 1, y - 6 - bounce, 2, 2);
-        } else {
-            ctx.fillRect(x - 2, y - 5 - bounce, 2, 1);
-            ctx.fillRect(x + 1, y - 5 - bounce, 2, 1);
-        }
-
-        // Animation-specific details
-        if (agent.animState === "coding") {
-            // Typing sparks
-            if (frame % 2 === 0) {
-                ctx.fillStyle = "#ffff6b";
-                ctx.fillRect(x + 8, y - bounce, 2, 2);
-            }
-        } else if (agent.animState === "thinking") {
-            // Thought dots
-            ctx.fillStyle = "#fff";
-            for (let i = 0; i < (frame % 3) + 1; i++) {
-                ctx.fillRect(x + 10 + i * 4, y - 12 - bounce - i * 3, 2, 2);
-            }
-        } else if (agent.animState === "running") {
-            // Speed lines
-            ctx.strokeStyle = "#6bff6b44";
-            ctx.beginPath();
-            ctx.moveTo(x - 10, y - bounce);
-            ctx.lineTo(x - 18, y - bounce + (frame % 2 ? 2 : -2));
-            ctx.stroke();
-        }
-
-        // Agent label
-        ctx.fillStyle = colors.body;
+        // Agent label color by tier
+        const tier = agent.tier || "qa";
+        const labelColors = {
+            ceo: "#ff6b6b",
+            coder: "#6bb5ff",
+            qa: "#6bff6b",
+        };
+        ctx.fillStyle = labelColors[tier] || "#ffffff";
         ctx.font = "6px 'Press Start 2P', monospace";
         ctx.textAlign = "center";
-        ctx.fillText(agent.displayName || agent.id, x, y + 22);
+        ctx.fillText(agent.displayName || agent.id, pos.x, pos.y + 22);
         ctx.textAlign = "left";
 
         // Speech bubble
         if (agent.speechBubble && agent.speechBubbleExpiry > timestamp) {
-            this.drawSpeechBubble(ctx, x, y - 20 - bounce, agent.speechBubble);
+            this.drawSpeechBubble(ctx, pos.x, y - 4, agent.speechBubble);
         }
     },
 
@@ -102,7 +107,6 @@ const AgentSprites = {
         ctx.fillRect(x - width / 2, y - 18, width, 14);
         ctx.strokeRect(x - width / 2, y - 18, width, 14);
 
-        // Arrow
         ctx.fillStyle = "#222";
         ctx.beginPath();
         ctx.moveTo(x - 3, y - 4);
@@ -114,5 +118,5 @@ const AgentSprites = {
         ctx.textAlign = "center";
         ctx.fillText(text, x, y - 9);
         ctx.textAlign = "left";
-    }
+    },
 };
