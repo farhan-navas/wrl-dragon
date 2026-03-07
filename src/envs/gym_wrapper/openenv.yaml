@@ -1,16 +1,6 @@
-name: gym-wrapper
-version: "0.1.0"
-description: OpenEnv wrapper for Gymnasium environments
-
-server:
-  module: src.envs.gym_wrapper.server.app
-  app: app
-  port: 8001
-
-environment:
-  class: src.envs.gym_wrapper.server.gym_environment.GymEnvironment
-  default_env_id: CartPole-v1
-
-client:
-  module: src.envs.gym_wrapper.client
-  class: GymEnvClient
+spec_version: 1
+name: gym_wrapper
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8001
