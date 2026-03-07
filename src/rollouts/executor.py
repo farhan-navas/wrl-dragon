@@ -16,11 +16,21 @@ from src.logging.events import Event, emit_event_sync
 from src.logging.orchestrator_log import log_error
 
 
+_action_space_cache: dict[str, int] = {}
+
+
 def _get_num_actions(env_name: str) -> int:
-    """Get the number of discrete actions for a gym env."""
+    """Get the number of discrete actions for a gym env.
+
+    Caches results to avoid repeated gym.make() calls (which are not
+    thread-safe due to gymnasium's lazy imports).
+    """
+    if env_name in _action_space_cache:
+        return _action_space_cache[env_name]
     tmp = gym.make(env_name)
     n = int(tmp.action_space.n) if hasattr(tmp.action_space, "n") else 2
     tmp.close()
+    _action_space_cache[env_name] = n
     return n
 
 
