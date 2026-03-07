@@ -6,9 +6,18 @@ import random
 import uuid
 from pathlib import Path
 
+import gymnasium as gym
 from openenv.core.generic_client import GenericEnvClient
 
 from src.logging.events import Event, emit_event_sync
+
+
+def _get_num_actions(env_name: str) -> int:
+    """Get the number of discrete actions for a gym env."""
+    tmp = gym.make(env_name)
+    n = int(tmp.action_space.n) if hasattr(tmp.action_space, "n") else 2
+    tmp.close()
+    return n
 
 
 def run_episodes(
@@ -19,6 +28,7 @@ def run_episodes(
     agent_id: str = "qa-cartpole",
 ) -> list[dict]:
     """Run rollout episodes over OpenEnv WebSocket (stateful sessions)."""
+    num_actions = _get_num_actions(env_name)
     env = GenericEnvClient(base_url=env_url)
     results = []
 
@@ -42,7 +52,7 @@ def run_episodes(
             total_reward = 0.0
 
             for step_num in range(max_steps):
-                action = random.randint(0, 1)
+                action = random.randint(0, num_actions - 1)
 
                 result = env.step({"value": action})
                 reward = result.reward or 0.0

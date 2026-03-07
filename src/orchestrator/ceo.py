@@ -39,9 +39,12 @@ def _query_cli(system: str, prompt: str, max_tokens: int = 1024) -> str:
     return result.stdout.strip()
 
 
+DEFAULT_ENVS = ["CartPole-v1", "LunarLander-v3"]
+
+
 class CEOOrchestrator:
-    def __init__(self, env_name: str = "CartPole-v1", mode: str = "auto"):
-        self.env_name = env_name
+    def __init__(self, env_names: list[str] | None = None, mode: str = "auto"):
+        self.env_names = env_names or list(DEFAULT_ENVS)
         self.agents: dict[str, dict] = {}
         self.round = 0
 
@@ -51,6 +54,7 @@ class CEOOrchestrator:
             self.mode = mode
 
         print(f"Orchestrator mode: {self.mode}")
+        print(f"Environments: {self.env_names}")
 
     def _query(self, system: str, prompt: str, max_tokens: int = 1024) -> str:
         if self.mode == "api":
@@ -74,36 +78,36 @@ class CEOOrchestrator:
             tier="ceo",
         ))
 
-        # Spawn coder for target env
-        coder = make_coder_agent(self.env_name)
-        self.agents[coder["id"]] = coder
-        emit_event_sync(Event(
-            type="agent_spawned",
-            agent_id=coder["id"],
-            tier="coder",
-            env=self.env_name,
-        ))
+        # Spawn coder + QA per env
+        for env_name in self.env_names:
+            coder = make_coder_agent(env_name)
+            self.agents[coder["id"]] = coder
+            emit_event_sync(Event(
+                type="agent_spawned",
+                agent_id=coder["id"],
+                tier="coder",
+                env=env_name,
+            ))
 
-        # Spawn QA worker for target env
-        qa = make_qa_agent(self.env_name)
-        self.agents[qa["id"]] = qa
-        emit_event_sync(Event(
-            type="agent_spawned",
-            agent_id=qa["id"],
-            tier="qa",
-            env=self.env_name,
-        ))
+            qa = make_qa_agent(env_name)
+            self.agents[qa["id"]] = qa
+            emit_event_sync(Event(
+                type="agent_spawned",
+                agent_id=qa["id"],
+                tier="qa",
+                env=env_name,
+            ))
 
         print(f"Spawned agents: {list(self.agents.keys())}")
 
     def run_ceo_planning(self) -> str:
         self.round += 1
         prompt = (
-            f"Round {self.round}. Environment: {self.env_name}. "
+            f"Round {self.round}. Environments: {json.dumps(self.env_names)}. "
             f"Active agents: {json.dumps(list(self.agents.keys()))}. "
-            "Create a plan: assign the coder to write/improve a reward shaping function, "
-            "then assign QA to run rollouts. Output a JSON plan with 'tasks' array, "
-            "each with 'agent_id', 'action', 'details'."
+            "Create a plan for each environment: assign coders to write/improve reward shaping, "
+            "then assign QA workers to run rollouts. Output a JSON plan with 'tasks' array, "
+            "each with 'agent_id', 'action', 'details', 'env'."
         )
 
         plan_text = self._query(CEO_AGENT["system_prompt"], prompt)
@@ -118,26 +122,26 @@ class CEOOrchestrator:
         ))
         print(f"Task: {from_id} -> {to_id}: {task_description}")
 
-    def run_coder_generation(self, task: str) -> str:
-        coder = make_coder_agent(self.env_name)
+    def run_coder_generation(self, env_name: str, task: str) -> str:
+        coder = make_coder_agent(env_name)
         self.assign_task(CEO_AGENT["id"], coder["id"], task)
 
         code = self._query(
             coder["system_prompt"],
-            f"Environment: {self.env_name}. Task: {task}. "
+            f"Environment: {env_name}. Task: {task}. "
             "Write a reward shaping function in Python. "
             "Output only the function code.",
             max_tokens=2048,
         )
-        print(f"Coder output:\n{code}\n")
+        print(f"Coder [{env_name}] output:\n{code}\n")
         return code
 
-    def run_analyst_review(self, rollout_results: list[dict]) -> str:
+    def run_analyst_review(self, rollout_results: dict[str, list[dict]]) -> str:
         analysis = self._query(
             ANALYST_AGENT["system_prompt"],
-            f"Review these rollout results for {self.env_name}:\n"
+            f"Review rollout results across environments:\n"
             f"{json.dumps(rollout_results, indent=2)}\n"
-            "Analyze performance and suggest improvements.",
+            "Analyze performance per environment and suggest improvements.",
         )
         print(f"Analyst review:\n{analysis}\n")
         return analysis
