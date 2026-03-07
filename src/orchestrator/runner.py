@@ -30,9 +30,11 @@ def run_batch(
     env_ports: dict[str, int],
     episodes: int,
     max_steps: int = 500,
+    generated_code: dict[str, str] | None = None,
 ) -> dict[str, list[dict]]:
     """Run all envs in parallel, return batch results."""
     batch_results: dict[str, list[dict]] = {}
+    generated_code = generated_code or {}
 
     with ThreadPoolExecutor(max_workers=len(env_ports)) as pool:
         futures = {}
@@ -45,6 +47,7 @@ def run_batch(
                 num_episodes=episodes,
                 max_steps=max_steps,
                 agent_id=agent_id,
+                policy_code=generated_code.get(env_name),
             )
             futures[future] = env_name
 
@@ -107,7 +110,7 @@ def main(
             # ── Phase 2: Run batch (all envs in parallel) ────────
             print(f"\n>> Phase 2: EXECUTE ({episodes_per_round} episodes x {len(envs)} envs, parallel)")
             log_phase(round_num, "execute", envs=envs, episodes=episodes_per_round)
-            batch_results = run_batch(env_ports, episodes_per_round)
+            batch_results = run_batch(env_ports, episodes_per_round, generated_code=generated)
 
             for env_name, results in batch_results.items():
                 if results:

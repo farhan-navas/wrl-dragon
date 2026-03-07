@@ -164,8 +164,12 @@ class CEOOrchestrator:
         if prev_code:
             prompt += f"\nPrevious code that was tested:\n```python\n{prev_code}\n```\n"
         prompt += (
-            "Write a reward shaping function in Python. "
-            "Output only the function code."
+            "Write a Python function `select_action(obs: list[float]) -> int` that picks "
+            "the best action given an observation vector. The function must be self-contained "
+            "(no external imports beyond math/random, no global state, no classes). "
+            "It receives the raw observation list and returns an integer action index. "
+            "Use your knowledge of the environment dynamics to write a heuristic policy. "
+            "Output ONLY the Python function, no explanation, no markdown fences."
             + self._memory_context()
         )
 
