@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.orchestrator.ceo import DEFAULT_ENVS, CEOOrchestrator
 from src.rollouts.executor import run_episodes
@@ -18,9 +20,43 @@ def start_env_server(env_name: str, port: int) -> subprocess.Popen:
          "--port", str(port), "--log-level", "warning"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**__import__("os").environ, "GYM_ENV_ID": env_name},
+        env={**os.environ, "GYM_ENV_ID": env_name},
     )
     return proc
+
+
+def run_batch(
+    env_ports: dict[str, int],
+    episodes: int,
+    max_steps: int = 500,
+) -> dict[str, list[dict]]:
+    """Run all envs in parallel, return batch results."""
+    batch_results: dict[str, list[dict]] = {}
+
+    with ThreadPoolExecutor(max_workers=len(env_ports)) as pool:
+        futures = {}
+        for env_name, port in env_ports.items():
+            agent_id = f"qa-{env_name.lower().replace('-', '').replace('_', '')}"
+            future = pool.submit(
+                run_episodes,
+                env_url=f"http://localhost:{port}",
+                env_name=env_name,
+                num_episodes=episodes,
+                max_steps=max_steps,
+                agent_id=agent_id,
+            )
+            futures[future] = env_name
+
+        for future in as_completed(futures):
+            env_name = futures[future]
+            try:
+                results = future.result()
+                batch_results[env_name] = results
+            except Exception as e:
+                print(f"  ERROR [{env_name}]: {e}")
+                batch_results[env_name] = []
+
+    return batch_results
 
 
 def main(
@@ -33,9 +69,10 @@ def main(
 
     print(f"=== WRL-Dragon Orchestrator ===")
     print(f"Environments: {envs}")
-    print(f"Rounds: {rounds}, Episodes/round: {episodes_per_round}\n")
+    print(f"Rounds: {rounds}, Episodes/round: {episodes_per_round}")
+    print(f"Flow: Generate All -> Run Batch -> Learn -> Repeat\n")
 
-    # Start one server per env on sequential ports
+    # Start one server per env
     env_ports: dict[str, int] = {}
     server_procs: list[subprocess.Popen] = []
 
@@ -46,56 +83,65 @@ def main(
         server_procs.append(proc)
         env_ports[env_name] = port
         print(f"  {env_name} -> :{port}")
-    time.sleep(2)
+    time.sleep(3)
 
     try:
         ceo = CEOOrchestrator(env_names=envs, mode=mode)
         ceo.spawn_agents()
 
-        all_results: dict[str, list[dict]] = {env: [] for env in envs}
+        cumulative: dict[str, list[dict]] = {env: [] for env in envs}
 
         for round_num in range(1, rounds + 1):
-            print(f"\n{'='*50}")
-            print(f"  Round {round_num}/{rounds}")
-            print(f"{'='*50}\n")
+            print(f"\n{'='*60}")
+            print(f"  ROUND {round_num}/{rounds}")
+            print(f"{'='*60}")
 
-            # CEO plans across all envs
-            plan = ceo.run_ceo_planning()
+            # ── Phase 1: Generate all code ───────────────────────
+            print(f"\n>> Phase 1: GENERATE (all {len(envs)} envs)")
+            generated = ceo.generate_all()
+            for env_name, code in generated.items():
+                print(f"  [{env_name}] {len(code)} chars generated")
 
-            for env_name in envs:
-                port = env_ports[env_name]
-                print(f"\n--- {env_name} (:{port}) ---\n")
+            # ── Phase 2: Run batch (all envs in parallel) ────────
+            print(f"\n>> Phase 2: EXECUTE ({episodes_per_round} episodes x {len(envs)} envs, parallel)")
+            batch_results = run_batch(env_ports, episodes_per_round)
 
-                # Coder generates reward shaping
-                code = ceo.run_coder_generation(
-                    env_name,
-                    f"Round {round_num}: Design reward shaping for {env_name}",
-                )
+            for env_name, results in batch_results.items():
+                if results:
+                    avg = sum(r["total_reward"] for r in results) / len(results)
+                    best = max(r["total_reward"] for r in results)
+                    print(f"  [{env_name}] avg={avg:.1f}, best={best:.1f}, episodes={len(results)}")
+                cumulative[env_name].extend(results)
 
-                # QA runs rollouts
-                print(f"Running {episodes_per_round} episodes...")
-                results = run_episodes(
-                    env_url=f"http://localhost:{port}",
-                    env_name=env_name,
-                    num_episodes=episodes_per_round,
-                )
-                all_results[env_name].extend(results)
+            # ── Phase 3: Learn ───────────────────────────────────
+            print(f"\n>> Phase 3: LEARN (feed results back to CEO)")
+            learnings = ceo.learn_from_batch(batch_results)
+            print(f"  Memory size: {len(ceo.memory)} entries")
 
-            # Analyst reviews all envs together
-            analysis = ceo.run_analyst_review(all_results)
-
-        print(f"\n=== Orchestration Complete ===")
-        for env_name, results in all_results.items():
+        # ── Summary ──────────────────────────────────────────────
+        print(f"\n{'='*60}")
+        print(f"  ORCHESTRATION COMPLETE")
+        print(f"{'='*60}")
+        for env_name, results in cumulative.items():
             if results:
                 avg = sum(r["total_reward"] for r in results) / len(results)
-                print(f"  {env_name}: {len(results)} episodes, avg reward: {avg:.1f}")
+                best = max(r["total_reward"] for r in results)
+                print(f"  {env_name}: {len(results)} total episodes, avg={avg:.1f}, best={best:.1f}")
+
+        # Show learning trajectory
+        if ceo.memory:
+            print(f"\nLearning trajectory:")
+            for env_name in envs:
+                env_mem = [m for m in ceo.memory if m["env"] == env_name]
+                rewards = [f"R{m['round']}={m['avg_reward']:.1f}" for m in env_mem]
+                print(f"  {env_name}: {' -> '.join(rewards)}")
 
     finally:
         for proc in server_procs:
             proc.terminate()
         for proc in server_procs:
             proc.wait()
-        print("All servers stopped.")
+        print("\nAll servers stopped.")
 
 
 if __name__ == "__main__":

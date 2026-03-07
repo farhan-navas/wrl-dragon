@@ -47,6 +47,10 @@ class CEOOrchestrator:
         self.env_names = env_names or list(DEFAULT_ENVS)
         self.agents: dict[str, dict] = {}
         self.round = 0
+        # Learning memory: accumulates insights across rounds
+        self.memory: list[dict] = []
+        # Generated code per env (latest round)
+        self.generated_code: dict[str, str] = {}
 
         if mode == "auto":
             self.mode = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
@@ -61,58 +65,151 @@ class CEOOrchestrator:
             return _query_api(system, prompt, max_tokens)
         return _query_cli(system, prompt, max_tokens)
 
+    def _memory_context(self) -> str:
+        if not self.memory:
+            return ""
+        return (
+            "\n\n## Learnings from previous rounds:\n"
+            + json.dumps(self.memory, indent=2)
+        )
+
     def spawn_agents(self):
-        # Register CEO
         self.agents[CEO_AGENT["id"]] = CEO_AGENT
         emit_event_sync(Event(
-            type="agent_spawned",
-            agent_id=CEO_AGENT["id"],
-            tier="ceo",
+            type="agent_spawned", agent_id=CEO_AGENT["id"], tier="ceo",
         ))
 
-        # Register Analyst
         self.agents[ANALYST_AGENT["id"]] = ANALYST_AGENT
         emit_event_sync(Event(
-            type="agent_spawned",
-            agent_id=ANALYST_AGENT["id"],
-            tier="ceo",
+            type="agent_spawned", agent_id=ANALYST_AGENT["id"], tier="ceo",
         ))
 
-        # Spawn coder + QA per env
         for env_name in self.env_names:
             coder = make_coder_agent(env_name)
             self.agents[coder["id"]] = coder
             emit_event_sync(Event(
-                type="agent_spawned",
-                agent_id=coder["id"],
-                tier="coder",
-                env=env_name,
+                type="agent_spawned", agent_id=coder["id"], tier="coder", env=env_name,
             ))
 
             qa = make_qa_agent(env_name)
             self.agents[qa["id"]] = qa
             emit_event_sync(Event(
-                type="agent_spawned",
-                agent_id=qa["id"],
-                tier="qa",
-                env=env_name,
+                type="agent_spawned", agent_id=qa["id"], tier="qa", env=env_name,
             ))
 
         print(f"Spawned agents: {list(self.agents.keys())}")
 
-    def run_ceo_planning(self) -> str:
+    # ── Phase 1: Generate ────────────────────────────────────────────
+
+    def generate_all(self) -> dict[str, str]:
+        """Generate code for ALL envs before any rollouts run."""
         self.round += 1
+        self.generated_code = {}
+
+        # CEO plans the whole batch
+        plan = self._plan_batch()
+
+        # Coders generate code for each env
+        for env_name in self.env_names:
+            code = self._generate_for_env(env_name)
+            self.generated_code[env_name] = code
+
+        return self.generated_code
+
+    def _plan_batch(self) -> str:
         prompt = (
             f"Round {self.round}. Environments: {json.dumps(self.env_names)}. "
             f"Active agents: {json.dumps(list(self.agents.keys()))}. "
-            "Create a plan for each environment: assign coders to write/improve reward shaping, "
-            "then assign QA workers to run rollouts. Output a JSON plan with 'tasks' array, "
-            "each with 'agent_id', 'action', 'details', 'env'."
+            "Plan code generation for ALL environments in this batch. "
+            "For each env, specify what reward shaping / policy code to generate. "
+            "Output a JSON plan with 'tasks' array, each with 'env', 'strategy', 'details'."
+            + self._memory_context()
         )
 
         plan_text = self._query(CEO_AGENT["system_prompt"], prompt)
-        print(f"CEO Plan (round {self.round}):\n{plan_text}\n")
+        print(f"CEO Batch Plan (round {self.round}):\n{plan_text}\n")
         return plan_text
+
+    def _generate_for_env(self, env_name: str) -> str:
+        coder = make_coder_agent(env_name)
+        self.assign_task(CEO_AGENT["id"], coder["id"], f"Generate code for {env_name}")
+
+        prev_code = ""
+        for m in self.memory:
+            if m.get("env") == env_name and m.get("code"):
+                prev_code = m["code"]
+
+        prompt = f"Environment: {env_name}. Round: {self.round}.\n"
+        if prev_code:
+            prompt += f"\nPrevious code that was tested:\n```python\n{prev_code}\n```\n"
+        prompt += (
+            "Write a reward shaping function in Python. "
+            "Output only the function code."
+            + self._memory_context()
+        )
+
+        code = self._query(coder["system_prompt"], prompt, max_tokens=2048)
+        print(f"Coder [{env_name}] output:\n{code}\n")
+        return code
+
+    # ── Phase 2: Execute (called by runner) ──────────────────────────
+
+    # (rollout execution happens in runner.py using the executor)
+
+    # ── Phase 3: Learn ───────────────────────────────────────────────
+
+    def learn_from_batch(self, batch_results: dict[str, list[dict]]) -> str:
+        """Feed batch results back to CEO. Updates memory with insights."""
+        # Analyst reviews the batch
+        analysis = self._query(
+            ANALYST_AGENT["system_prompt"],
+            f"Review batch rollout results across ALL environments:\n"
+            f"{json.dumps(batch_results, indent=2)}\n\n"
+            "For each environment:\n"
+            "1. What was the avg/min/max reward?\n"
+            "2. Is performance improving vs previous rounds?\n"
+            "3. What specific changes would improve the next round?\n"
+            "Output structured JSON with 'per_env' analysis and 'cross_env' insights."
+            + self._memory_context(),
+        )
+        print(f"Analyst batch review:\n{analysis}\n")
+
+        # CEO synthesizes learnings
+        learnings = self._query(
+            CEO_AGENT["system_prompt"],
+            f"Round {self.round} complete.\n\n"
+            f"Analyst review:\n{analysis}\n\n"
+            f"Batch results:\n{json.dumps(batch_results, indent=2)}\n\n"
+            "Synthesize key learnings. For each environment, state:\n"
+            "- What worked, what didn't\n"
+            "- Concrete changes for next round's code generation\n"
+            "- Any cross-environment patterns\n"
+            "Output JSON with 'learnings' array, each with 'env', 'insight', 'next_action'."
+            + self._memory_context(),
+            max_tokens=2048,
+        )
+        print(f"CEO Learnings (round {self.round}):\n{learnings}\n")
+
+        # Store in memory
+        for env_name in self.env_names:
+            env_results = batch_results.get(env_name, [])
+            avg_reward = 0.0
+            if env_results:
+                avg_reward = sum(r["total_reward"] for r in env_results) / len(env_results)
+
+            self.memory.append({
+                "round": self.round,
+                "env": env_name,
+                "avg_reward": avg_reward,
+                "num_episodes": len(env_results),
+                "code": self.generated_code.get(env_name, ""),
+                "analysis": analysis[:500],
+                "learnings": learnings[:500],
+            })
+
+        return learnings
+
+    # ── Helpers ───────────────────────────────────────────────────────
 
     def assign_task(self, from_id: str, to_id: str, task_description: str):
         emit_event_sync(Event(
@@ -121,30 +218,6 @@ class CEOOrchestrator:
             task=task_description,
         ))
         print(f"Task: {from_id} -> {to_id}: {task_description}")
-
-    def run_coder_generation(self, env_name: str, task: str) -> str:
-        coder = make_coder_agent(env_name)
-        self.assign_task(CEO_AGENT["id"], coder["id"], task)
-
-        code = self._query(
-            coder["system_prompt"],
-            f"Environment: {env_name}. Task: {task}. "
-            "Write a reward shaping function in Python. "
-            "Output only the function code.",
-            max_tokens=2048,
-        )
-        print(f"Coder [{env_name}] output:\n{code}\n")
-        return code
-
-    def run_analyst_review(self, rollout_results: dict[str, list[dict]]) -> str:
-        analysis = self._query(
-            ANALYST_AGENT["system_prompt"],
-            f"Review rollout results across environments:\n"
-            f"{json.dumps(rollout_results, indent=2)}\n"
-            "Analyze performance per environment and suggest improvements.",
-        )
-        print(f"Analyst review:\n{analysis}\n")
-        return analysis
 
     def get_agent_list(self) -> list[dict]:
         return [
