@@ -7,6 +7,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from src.logging.orchestrator_log import log_error, log_phase
 from src.orchestrator.ceo import DEFAULT_ENVS, CEOOrchestrator
 from src.rollouts.executor import run_episodes
 
@@ -54,6 +55,7 @@ def run_batch(
                 batch_results[env_name] = results
             except Exception as e:
                 print(f"  ERROR [{env_name}]: {e}")
+                log_error(0, "execute", e, env=env_name)
                 batch_results[env_name] = []
 
     return batch_results
@@ -104,6 +106,7 @@ def main(
 
             # ── Phase 2: Run batch (all envs in parallel) ────────
             print(f"\n>> Phase 2: EXECUTE ({episodes_per_round} episodes x {len(envs)} envs, parallel)")
+            log_phase(round_num, "execute", envs=envs, episodes=episodes_per_round)
             batch_results = run_batch(env_ports, episodes_per_round)
 
             for env_name, results in batch_results.items():

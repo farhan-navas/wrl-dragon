@@ -5,6 +5,14 @@ import os
 import subprocess
 
 from src.logging.events import Event, emit_event_sync
+from src.logging.orchestrator_log import (
+    log_batch_results,
+    log_error,
+    log_generated_code,
+    log_learnings,
+    log_phase,
+    log_query,
+)
 from src.orchestrator.agents import (
     ANALYST_AGENT,
     CEO_AGENT,
@@ -60,10 +68,17 @@ class CEOOrchestrator:
         print(f"Orchestrator mode: {self.mode}")
         print(f"Environments: {self.env_names}")
 
-    def _query(self, system: str, prompt: str, max_tokens: int = 1024) -> str:
-        if self.mode == "api":
-            return _query_api(system, prompt, max_tokens)
-        return _query_cli(system, prompt, max_tokens)
+    def _query(self, system: str, prompt: str, max_tokens: int = 1024, agent_id: str = "unknown") -> str:
+        try:
+            if self.mode == "api":
+                result = _query_api(system, prompt, max_tokens)
+            else:
+                result = _query_cli(system, prompt, max_tokens)
+            log_query(self.round, agent_id, prompt, result, self.mode)
+            return result
+        except Exception as e:
+            log_error(self.round, "query", e, agent_id=agent_id, prompt=prompt[:500])
+            raise
 
     def _memory_context(self) -> str:
         if not self.memory:
@@ -105,14 +120,20 @@ class CEOOrchestrator:
         """Generate code for ALL envs before any rollouts run."""
         self.round += 1
         self.generated_code = {}
+        log_phase(self.round, "generate", envs=self.env_names)
 
         # CEO plans the whole batch
         plan = self._plan_batch()
 
         # Coders generate code for each env
         for env_name in self.env_names:
-            code = self._generate_for_env(env_name)
-            self.generated_code[env_name] = code
+            try:
+                code = self._generate_for_env(env_name)
+                self.generated_code[env_name] = code
+                log_generated_code(self.round, env_name, code)
+            except Exception as e:
+                log_error(self.round, "generate", e, env=env_name)
+                self.generated_code[env_name] = f"# ERROR: {e}"
 
         return self.generated_code
 
@@ -126,7 +147,7 @@ class CEOOrchestrator:
             + self._memory_context()
         )
 
-        plan_text = self._query(CEO_AGENT["system_prompt"], prompt)
+        plan_text = self._query(CEO_AGENT["system_prompt"], prompt, agent_id=CEO_AGENT["id"])
         print(f"CEO Batch Plan (round {self.round}):\n{plan_text}\n")
         return plan_text
 
@@ -148,7 +169,7 @@ class CEOOrchestrator:
             + self._memory_context()
         )
 
-        code = self._query(coder["system_prompt"], prompt, max_tokens=2048)
+        code = self._query(coder["system_prompt"], prompt, max_tokens=2048, agent_id=coder["id"])
         print(f"Coder [{env_name}] output:\n{code}\n")
         return code
 
@@ -160,34 +181,47 @@ class CEOOrchestrator:
 
     def learn_from_batch(self, batch_results: dict[str, list[dict]]) -> str:
         """Feed batch results back to CEO. Updates memory with insights."""
+        log_phase(self.round, "learn", envs=self.env_names)
+        log_batch_results(self.round, batch_results)
+
         # Analyst reviews the batch
-        analysis = self._query(
-            ANALYST_AGENT["system_prompt"],
-            f"Review batch rollout results across ALL environments:\n"
-            f"{json.dumps(batch_results, indent=2)}\n\n"
-            "For each environment:\n"
-            "1. What was the avg/min/max reward?\n"
-            "2. Is performance improving vs previous rounds?\n"
-            "3. What specific changes would improve the next round?\n"
-            "Output structured JSON with 'per_env' analysis and 'cross_env' insights."
-            + self._memory_context(),
-        )
+        try:
+            analysis = self._query(
+                ANALYST_AGENT["system_prompt"],
+                f"Review batch rollout results across ALL environments:\n"
+                f"{json.dumps(batch_results, indent=2)}\n\n"
+                "For each environment:\n"
+                "1. What was the avg/min/max reward?\n"
+                "2. Is performance improving vs previous rounds?\n"
+                "3. What specific changes would improve the next round?\n"
+                "Output structured JSON with 'per_env' analysis and 'cross_env' insights."
+                + self._memory_context(),
+                agent_id=ANALYST_AGENT["id"],
+            )
+        except Exception as e:
+            log_error(self.round, "learn", e, step="analyst_review")
+            analysis = f"Analyst error: {e}"
         print(f"Analyst batch review:\n{analysis}\n")
 
         # CEO synthesizes learnings
-        learnings = self._query(
-            CEO_AGENT["system_prompt"],
-            f"Round {self.round} complete.\n\n"
-            f"Analyst review:\n{analysis}\n\n"
-            f"Batch results:\n{json.dumps(batch_results, indent=2)}\n\n"
-            "Synthesize key learnings. For each environment, state:\n"
-            "- What worked, what didn't\n"
-            "- Concrete changes for next round's code generation\n"
-            "- Any cross-environment patterns\n"
-            "Output JSON with 'learnings' array, each with 'env', 'insight', 'next_action'."
-            + self._memory_context(),
-            max_tokens=2048,
-        )
+        try:
+            learnings = self._query(
+                CEO_AGENT["system_prompt"],
+                f"Round {self.round} complete.\n\n"
+                f"Analyst review:\n{analysis}\n\n"
+                f"Batch results:\n{json.dumps(batch_results, indent=2)}\n\n"
+                "Synthesize key learnings. For each environment, state:\n"
+                "- What worked, what didn't\n"
+                "- Concrete changes for next round's code generation\n"
+                "- Any cross-environment patterns\n"
+                "Output JSON with 'learnings' array, each with 'env', 'insight', 'next_action'."
+                + self._memory_context(),
+                max_tokens=2048,
+                agent_id=CEO_AGENT["id"],
+            )
+        except Exception as e:
+            log_error(self.round, "learn", e, step="ceo_synthesis")
+            learnings = f"CEO synthesis error: {e}"
         print(f"CEO Learnings (round {self.round}):\n{learnings}\n")
 
         # Store in memory
@@ -207,6 +241,7 @@ class CEOOrchestrator:
                 "learnings": learnings[:500],
             })
 
+        log_learnings(self.round, analysis, learnings, self.memory)
         return learnings
 
     # ── Helpers ───────────────────────────────────────────────────────
