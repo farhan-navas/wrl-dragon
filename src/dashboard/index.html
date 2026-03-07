@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WRL-Dragon - RL Orchestrator</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="header">
+        <h1>WRL-DRAGON</h1>
+        <span id="status-indicator">Disconnected</span>
+    </div>
+
+    <div id="main">
+        <div id="canvas-container">
+            <canvas id="agent-canvas" width="800" height="600"></canvas>
+        </div>
+
+        <div id="side-panel" class="hidden">
+            <button id="close-panel">[X]</button>
+            <h2 id="panel-title">Agent Details</h2>
+            <div id="panel-content">
+                <div id="video-container">
+                    <video id="rollout-video" controls></video>
+                </div>
+                <div id="reward-chart-container">
+                    <canvas id="reward-chart" width="350" height="200"></canvas>
+                </div>
+                <div id="log-viewer">
+                    <h3>Step Log</h3>
+                    <select id="episode-selector"></select>
+                    <div id="log-entries"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="event-log">
+        <h3>Events</h3>
+        <div id="event-entries"></div>
+    </div>
+
+    <script src="canvas/layout.js"></script>
+    <script src="canvas/agents.js"></script>
+    <script src="canvas/renderer.js"></script>
+    <script src="panels/reward-chart.js"></script>
+    <script src="panels/rollout-viewer.js"></script>
+    <script src="ws/client.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
