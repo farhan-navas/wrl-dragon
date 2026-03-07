@@ -5,7 +5,7 @@ description = "RL orchestrator using Claude Code to coordinate sub-agents on Ope
 requires-python = ">=3.10"
 dependencies = [
     # OpenEnv core
-    "openenv @ git+https://github.com/meta-pytorch/OpenEnv.git",
+    "openenv-core",
 
     # Claude API (orchestrator)
     "anthropic>=0.40.0",
