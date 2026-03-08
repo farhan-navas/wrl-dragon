@@ -208,7 +208,8 @@ def train(
                 )},
             ]
             prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                messages, tokenize=False, add_generation_prompt=True,
+                enable_thinking=False,
             )
             rows.append({"prompt": prompt, "env_name": env_name})
 
