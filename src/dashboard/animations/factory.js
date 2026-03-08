@@ -82,6 +82,10 @@ const AnimationFactory = {
             }
         });
 
+        // Narrative events — handled by ActivityFeed, no canvas animation needed
+        this.register("phase_change", () => {});
+        this.register("insight", () => {});
+
         // ── Demo-only animations (scripted sequence) ──
 
         this.register("demo_ceo_thinking", () => {

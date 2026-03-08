@@ -7,6 +7,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from src.logging.events import EVENTS_LOG_PATH, Event, emit_event_sync
 from src.logging.orchestrator_log import log_error, log_phase
 from src.orchestrator.ceo import DEFAULT_ENVS, CEOOrchestrator
 from src.rollouts.executor import _get_num_actions, run_episodes
@@ -97,6 +98,11 @@ def main(
     time.sleep(3)
 
     try:
+        # Clear old logs and signal a fresh run — clears dashboard state
+        if EVENTS_LOG_PATH.exists():
+            EVENTS_LOG_PATH.write_text("")
+        emit_event_sync(Event(type="run_started", message=f"New run: {rounds} rounds, {len(envs)} envs"))
+
         ceo = CEOOrchestrator(env_names=envs, mode=mode)
         ceo.spawn_agents()
 
@@ -109,13 +115,18 @@ def main(
 
             # ── Phase 1: Generate all code ───────────────────────
             print(f"\n>> Phase 1: GENERATE (all {len(envs)} envs)")
-            generated = ceo.generate_all()
+            generated = ceo.generate_all(total_rounds=rounds)
             for env_name, code in generated.items():
                 print(f"  [{env_name}] {len(code)} chars generated")
 
             # ── Phase 2: Run batch (all envs in parallel) ────────
             print(f"\n>> Phase 2: EXECUTE ({episodes_per_round} episodes x {len(envs)} envs, parallel)")
             log_phase(round_num, "execute", envs=envs, episodes=episodes_per_round)
+            emit_event_sync(Event(
+                type="phase_change", phase="execute",
+                round_num=round_num, total_rounds=rounds,
+                message=f"Running {episodes_per_round} episodes across {len(envs)} environments...",
+            ))
             batch_results = run_batch(env_ports, episodes_per_round, generated_code=generated)
 
             for env_name, results in batch_results.items():
@@ -127,7 +138,7 @@ def main(
 
             # ── Phase 3: Learn ───────────────────────────────────
             print(f"\n>> Phase 3: LEARN (feed results back to CEO)")
-            learnings = ceo.learn_from_batch(batch_results)
+            learnings = ceo.learn_from_batch(batch_results, total_rounds=rounds)
             print(f"  Memory size: {len(ceo.memory)} entries")
 
         # ── Summary ──────────────────────────────────────────────

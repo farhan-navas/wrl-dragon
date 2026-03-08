@@ -13,10 +13,23 @@
     </div>
 
     <div id="main">
+        <div id="activity-feed">
+            <div id="feed-header">
+                <h2>MISSION LOG</h2>
+                <div id="feed-round">STANDBY</div>
+            </div>
+            <div id="feed-phase-bar">
+                <span id="feed-phase"></span>
+            </div>
+            <div id="feed-stats"></div>
+            <div id="feed-entries"></div>
+        </div>
+
         <div id="canvas-container">
             <canvas id="agent-canvas" width="800" height="600"></canvas>
         </div>
 
+        <!-- Meta-Training panel (Phase 2) — hidden until needed
         <div id="training-container" class="hidden">
             <div id="training-header">
                 <h2>Meta-Training</h2>
@@ -39,6 +52,9 @@
                 <pre id="training-best-code">No code yet</pre>
             </div>
         </div>
+        -->
+
+        <div id="right-spacer"></div>
 
         <div id="side-panel" class="hidden">
             <button id="close-panel">[X]</button>
@@ -64,6 +80,7 @@
         <div id="event-entries"></div>
     </div>
 
+    <script src="store.js"></script>
     <script src="canvas/tileset-loader.js"></script>
     <script src="canvas/character-png.js"></script>
     <script src="canvas/furniture-sprites.js"></script>
@@ -72,8 +89,9 @@
     <script src="canvas/agents.js"></script>
     <script src="canvas/renderer.js"></script>
     <script src="panels/reward-chart.js"></script>
-    <script src="panels/training-view.js"></script>
+    <!-- <script src="panels/training-view.js"></script> -->
     <script src="panels/rollout-viewer.js"></script>
+    <script src="panels/activity-feed.js"></script>
     <script src="ws/client.js"></script>
     <script src="animations/factory.js"></script>
     <script src="app.js"></script>

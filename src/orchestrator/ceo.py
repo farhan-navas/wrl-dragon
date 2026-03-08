@@ -131,11 +131,18 @@ class CEOOrchestrator:
 
     # ── Phase 1: Generate ────────────────────────────────────────────
 
-    def generate_all(self) -> dict[str, str]:
+    def generate_all(self, total_rounds: int = 1) -> dict[str, str]:
         """Generate code for ALL envs before any rollouts run."""
         self.round += 1
         self.generated_code = {}
         log_phase(self.round, "generate", envs=self.env_names)
+
+        emit_event_sync(Event(
+            type="phase_change", phase="generate",
+            round_num=self.round, total_rounds=total_rounds,
+            message=f"CEO is strategizing for {len(self.env_names)} environments...",
+            agent_id=CEO_AGENT["id"],
+        ))
 
         # CEO plans the whole batch
         plan = self._plan_batch()
@@ -146,6 +153,13 @@ class CEOOrchestrator:
                 code = self._generate_for_env(env_name)
                 self.generated_code[env_name] = code
                 log_generated_code(self.round, env_name, code)
+
+                emit_event_sync(Event(
+                    type="insight", source="coder",
+                    agent_id=make_coder_agent(env_name)["id"],
+                    env=env_name, round_num=self.round,
+                    message=f"Code generated for {env_name} ({len(code)} chars)",
+                ))
             except Exception as e:
                 log_error(self.round, "generate", e, env=env_name)
                 self.generated_code[env_name] = f"# ERROR: {e}"
@@ -199,10 +213,28 @@ class CEOOrchestrator:
 
     # ── Phase 3: Learn ───────────────────────────────────────────────
 
-    def learn_from_batch(self, batch_results: dict[str, list[dict]]) -> str:
+    def learn_from_batch(self, batch_results: dict[str, list[dict]], total_rounds: int = 1) -> str:
         """Feed batch results back to CEO. Updates memory with insights."""
         log_phase(self.round, "learn", envs=self.env_names)
         log_batch_results(self.round, batch_results)
+
+        # Emit batch summary insight
+        for env_name, results in batch_results.items():
+            if results:
+                avg = sum(r["total_reward"] for r in results) / len(results)
+                best = max(r["total_reward"] for r in results)
+                emit_event_sync(Event(
+                    type="insight", source="system",
+                    env=env_name, round_num=self.round,
+                    message=f"{env_name}: avg reward {avg:.1f}, best {best:.1f} ({len(results)} episodes)",
+                ))
+
+        emit_event_sync(Event(
+            type="phase_change", phase="learn",
+            round_num=self.round, total_rounds=total_rounds,
+            message="Analyst is reviewing results...",
+            agent_id=ANALYST_AGENT["id"],
+        ))
 
         # Analyst reviews the batch
         try:
@@ -222,6 +254,13 @@ class CEOOrchestrator:
             log_error(self.round, "learn", e, step="analyst_review")
             analysis = f"Analyst error: {e}"
         print(f"Analyst batch review:\n{analysis}\n")
+
+        # Extract a short summary from the analysis for the feed
+        emit_event_sync(Event(
+            type="insight", source="analyst",
+            agent_id=ANALYST_AGENT["id"], round_num=self.round,
+            message="Batch analysis complete. Identifying patterns and improvements.",
+        ))
 
         # CEO synthesizes learnings
         try:
@@ -243,6 +282,12 @@ class CEOOrchestrator:
             log_error(self.round, "learn", e, step="ceo_synthesis")
             learnings = f"CEO synthesis error: {e}"
         print(f"CEO Learnings (round {self.round}):\n{learnings}\n")
+
+        emit_event_sync(Event(
+            type="insight", source="ceo",
+            agent_id=CEO_AGENT["id"], round_num=self.round,
+            message=f"Round {self.round} learnings synthesized. Adapting strategy for next round.",
+        ))
 
         # Store in memory
         for env_name in self.env_names:

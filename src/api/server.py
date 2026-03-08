@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -20,6 +19,9 @@ app = FastAPI(title="WRL-Dragon API")
 # In-memory agent registry (populated by orchestrator or manually)
 _agents: list[dict] = []
 _ws_connections: set[WebSocket] = set()
+# In-memory event buffer for replay on reconnect
+_event_history: list[dict] = []
+_MAX_EVENT_HISTORY = 200
 
 
 def set_agents(agents: list[dict]):
@@ -40,15 +42,28 @@ async def _broadcast(message: str):
 
 register_ws_broadcaster(_broadcast)
 
-# TODO: this might be useless!!!
+# Cross-process bridge: orchestrator POSTs events here, server broadcasts to WS clients
 @app.post("/internal/events")
 async def post_event(request: Request):
     body = await request.body()
-    await _broadcast(body.decode())
+    text = body.decode()
+    # Store in memory for replay
+    try:
+        evt = json.loads(text)
+        # Clear history on new run
+        if evt.get("type") == "run_started":
+            _event_history.clear()
+            _agents.clear()
+        _event_history.append(evt)
+        if len(_event_history) > _MAX_EVENT_HISTORY:
+            _event_history.pop(0)
+    except Exception:
+        pass
+    await _broadcast(text)
     return {"ok": True}
 
 
-# TODO: this might be useless!!!
+# Cross-process bridge: orchestrator registers agents here for GET /api/agents
 @app.post("/internal/agents")
 async def post_agents(request: Request):
     global _agents
@@ -65,9 +80,29 @@ async def receive_event(request: Request):
     EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(EVENTS_LOG_PATH, "a") as f:
         f.write(event.to_json() + "\n")
+    # Store in memory for replay
+    evt_dict = json.loads(event.to_json())
+    _event_history.append(evt_dict)
+    if len(_event_history) > _MAX_EVENT_HISTORY:
+        _event_history.pop(0)
     # Broadcast to WebSocket clients
     await _broadcast(event.to_json())
     return {"ok": True}
+
+
+@app.get("/api/events/history")
+def get_event_history():
+    """Return buffered events for replay on page refresh."""
+    # If in-memory buffer is empty, try loading from disk
+    if not _event_history and EVENTS_LOG_PATH.exists():
+        try:
+            lines = EVENTS_LOG_PATH.read_text().strip().split("\n")
+            for line in lines[-_MAX_EVENT_HISTORY:]:
+                if line:
+                    _event_history.append(json.loads(line))
+        except Exception:
+            pass
+    return _event_history
 
 
 @app.get("/api/agents")

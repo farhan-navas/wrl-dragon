@@ -66,6 +66,11 @@ body {
     image-rendering: crisp-edges;
 }
 
+#right-spacer {
+    width: 280px;
+    min-width: 280px;
+}
+
 #side-panel {
     width: 400px;
     background: #111128;
@@ -75,6 +80,11 @@ body {
 }
 
 #side-panel.hidden {
+    display: none;
+}
+
+/* Hide spacer when side panel is visible */
+#main:has(#side-panel:not(.hidden)) #right-spacer {
     display: none;
 }
 
@@ -279,6 +289,203 @@ body {
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-all;
+}
+
+/* ── Activity Feed (left panel) ────────────────────────── */
+#activity-feed {
+    width: 280px;
+    min-width: 280px;
+    background: #0d0d1e;
+    border-right: 2px solid #333;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#feed-header {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid #2a2a3a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+#feed-header h2 {
+    font-size: 9px;
+    color: #ff6b6b;
+    letter-spacing: 2px;
+}
+
+#feed-round {
+    font-size: 7px;
+    color: #ffb86b;
+    background: rgba(255, 184, 107, 0.1);
+    padding: 2px 6px;
+    border: 1px solid rgba(255, 184, 107, 0.3);
+}
+
+#feed-phase-bar {
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a3a;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.phase-dot {
+    font-size: 7px;
+    color: #444;
+    padding: 2px 5px;
+    border: 1px solid #333;
+    background: #0a0a15;
+}
+
+.phase-dot.active {
+    color: #6bff6b;
+    border-color: #6bff6b;
+    background: rgba(107, 255, 107, 0.08);
+    text-shadow: 0 0 6px rgba(107, 255, 107, 0.5);
+}
+
+.phase-arrow {
+    font-size: 7px;
+    color: #333;
+    padding: 0 1px;
+}
+
+#feed-stats {
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a3a;
+    display: flex;
+    gap: 10px;
+    font-size: 7px;
+    color: #666;
+    flex-shrink: 0;
+}
+
+#feed-stats span {
+    color: #888;
+}
+
+#feed-entries {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px 0;
+    min-height: 0; /* critical for flex scroll */
+}
+
+/* Feed entry styles */
+.feed-entry {
+    padding: 8px 12px;
+    font-size: 9px;
+    line-height: 2;
+    border-bottom: 1px solid #1a1a2a;
+    color: #777;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.feed-time {
+    color: #444;
+    margin-right: 4px;
+}
+
+.feed-name {
+    color: #e0e0e0;
+    font-weight: normal;
+}
+
+.feed-task-text {
+    color: #6bb5ff;
+    font-style: italic;
+}
+
+.feed-reward {
+    color: #ffb86b;
+}
+
+/* Tier badges */
+.feed-tier {
+    display: inline-block;
+    padding: 1px 4px;
+    font-size: 6px;
+    border: 1px solid;
+    margin-right: 3px;
+}
+
+.tier-ceo {
+    color: #ffb86b;
+    border-color: #ffb86b;
+    background: rgba(255, 184, 107, 0.1);
+}
+
+.tier-coder {
+    color: #6bb5ff;
+    border-color: #6bb5ff;
+    background: rgba(107, 181, 255, 0.1);
+}
+
+.tier-qa {
+    color: #6bff6b;
+    border-color: #6bff6b;
+    background: rgba(107, 255, 107, 0.1);
+}
+
+/* Grade badges */
+.feed-grade {
+    display: inline-block;
+    padding: 0 4px;
+    font-size: 7px;
+    font-weight: bold;
+    border: 1px solid;
+    margin-left: 4px;
+}
+
+.grade-S { color: #ffd700; border-color: #ffd700; background: rgba(255, 215, 0, 0.15); }
+.grade-A { color: #6bff6b; border-color: #6bff6b; background: rgba(107, 255, 107, 0.1); }
+.grade-B { color: #6bb5ff; border-color: #6bb5ff; background: rgba(107, 181, 255, 0.1); }
+.grade-C { color: #ffb86b; border-color: #ffb86b; background: rgba(255, 184, 107, 0.1); }
+.grade-D { color: #ff6b6b; border-color: #ff6b6b; background: rgba(255, 107, 107, 0.1); }
+
+/* Entry type colors */
+.feed-entry.feed-spawn { color: #6bff6b; }
+.feed-entry.feed-spawn .feed-time { color: #3a7a3a; }
+
+.feed-entry.feed-task { color: #8899bb; }
+
+.feed-entry.feed-rollout { color: #aaa; }
+
+.feed-entry.feed-result { color: #cc99dd; }
+
+.feed-entry.feed-phase {
+    color: #ffb86b;
+    border-bottom: 1px solid rgba(255, 184, 107, 0.2);
+    padding-bottom: 10px;
+    margin-bottom: 1px;
+}
+
+.feed-phase-label {
+    color: #ffb86b;
+    background: rgba(255, 184, 107, 0.12);
+    padding: 1px 5px;
+    border: 1px solid rgba(255, 184, 107, 0.3);
+    font-size: 7px;
+    letter-spacing: 1px;
+}
+
+.feed-entry.feed-insight {
+    color: #b89eff;
+    background: rgba(184, 158, 255, 0.04);
+    border-left: 2px solid rgba(184, 158, 255, 0.3);
+    padding-left: 10px;
+}
+
+.feed-insight-source {
+    color: #b89eff;
+    font-size: 6px;
 }
 
 /* Scrollbar */
