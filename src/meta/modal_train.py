@@ -136,7 +136,17 @@ def train(
         use_gradient_checkpointing="unsloth",
         random_state=42,
     )
+    # Ensure pad token is set so GRPO pads all completions in a group
+    # to the same length — prevents completion_mask shape mismatch
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    model.config.pad_token_id = tokenizer.pad_token_id
+    tokenizer.padding_side = "right"
+
     print(f"Model loaded in {time.time() - t0:.1f}s")
+    print(f"  pad_token_id={tokenizer.pad_token_id}")
 
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
