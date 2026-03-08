@@ -25,7 +25,8 @@ image = (
         add_python="3.11",
     )
     .apt_install("git", "swig")
-    .pip_install("torch>=2.6.0", "packaging", "ninja", "numpy>=1.26.0")
+    .pip_install("pip>=24.0", "setuptools", "wheel", "packaging", "ninja", "numpy>=1.26.0")
+    .pip_install("torch>=2.6.0")
     .pip_install(
         "flash-attn>=2.6.3",
         extra_options="--no-build-isolation",
