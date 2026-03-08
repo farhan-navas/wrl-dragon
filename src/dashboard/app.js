@@ -43,14 +43,21 @@ const App = {
             // Server not running yet
         }
 
-        // Use server agents if available, otherwise spawn demo agents
-        const toSpawn = agents.length > 0 ? agents : this.DEMO_AGENTS;
-        for (const agent of toSpawn) {
-            if (!Renderer.getAgent(agent.id)) {
+        if (agents.length > 0) {
+            // Real agents from server — clear any existing demo agents first
+            Renderer.agents = [];
+            for (const agent of agents) {
                 Renderer.addAgent(agent);
             }
+            Layout.invalidateBackground();
+        } else {
+            // No server — use demo agents as placeholders
+            for (const agent of this.DEMO_AGENTS) {
+                if (!Renderer.getAgent(agent.id)) {
+                    Renderer.addAgent(agent);
+                }
+            }
         }
-
     },
 
     handleEvent(event) {
@@ -68,7 +75,7 @@ const App = {
             RolloutViewer.open(agent);
         } else {
             // Show basic info for non-QA agents
-            Renderer.showSpeechBubble(agent.id, `${agent.tier.toUpperCase()} agent`, 2000);
+            Renderer.showSpeechBubble(agent.id, agent.displayName || agent.id, 2000);
         }
     },
 

@@ -26,6 +26,7 @@ class Event(BaseModel):
     agent_id: str | None = None
     tier: str | None = None
     env: str | None = None
+    name: str | None = None
 
     # task_assigned
     from_agent: str | None = Field(None, alias="from")

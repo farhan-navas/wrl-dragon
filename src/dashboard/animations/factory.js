@@ -33,7 +33,7 @@ const AnimationFactory = {
                     id: agentId,
                     tier: ctx.tier,
                     env: ctx.env,
-                    name: agentId,
+                    name: ctx.name || agentId,
                 });
             }
             Renderer.showSpeechBubble(agentId, "Ready!", 2000);
