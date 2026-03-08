@@ -1,20 +1,50 @@
-FROM python:3.12-slim
+ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
 
-RUN apt-get update && apt-get install -y --no-install-recommends swig \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir \
-    fastapi>=0.104.0 \
-    uvicorn>=0.24.0 \
-    "gymnasium[box2d]>=1.0.0" \
-    numpy>=1.26.0 \
-    pydantic>=2.0.0
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
-COPY app.py .
 
-RUN useradd -m appuser
-USER appuser
+COPY . /app/env
 
-EXPOSE 7860
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
+WORKDIR /app/env
+
+RUN if ! command -v uv >/dev/null 2>&1; then \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv && \
+    mv /root/.local/bin/uvx /usr/local/bin/uvx; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git swig \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f uv.lock ]; then \
+        uv sync --frozen --no-install-project --no-editable; \
+    else \
+        uv sync --no-install-project --no-editable; \
+    fi
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f uv.lock ]; then \
+        uv sync --frozen --no-editable; \
+    else \
+        uv sync --no-editable; \
+    fi
+
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+COPY --from=builder /app/env/.venv /app/.venv
+COPY --from=builder /app/env /app/env
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app/env:$PYTHONPATH"
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENV ENABLE_WEB_INTERFACE=true
+
+CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]

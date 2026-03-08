@@ -81,35 +81,54 @@ def _try_remote_rollout(
     max_steps: int,
     gym_space_url: str | None = None,
 ) -> list[dict] | None:
-    """Try running rollout via HF Space. Returns results list or None on failure."""
+    """Try running rollout via HF Space OpenEnv server. Returns results list or None on failure."""
     url = gym_space_url or GYM_SPACE_URL
     if not url:
         return None
+
+    num_actions = _get_num_actions(env_name)
+    policy = load_policy(policy_code, num_actions) if policy_code else None
+
     try:
         import httpx
-        resp = httpx.post(
-            f"{url.rstrip('/')}/rollout",
-            json={
-                "env_name": env_name,
-                "policy_code": policy_code,
-                "num_episodes": num_episodes,
-                "max_steps": max_steps,
-            },
-            timeout=120.0,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            rewards = data.get("rewards", [])
-            crashed = data.get("crashed", 0)
-            results = []
-            for i, reward in enumerate(rewards):
-                results.append({
-                    "run_id": str(uuid.uuid4())[:8],
-                    "env": env_name,
-                    "total_reward": reward,
-                    "steps": max_steps,  # approximate
-                })
-            return results
+        base = url.rstrip("/")
+        client = httpx.Client(timeout=30.0)
+        results = []
+
+        for ep in range(num_episodes):
+            run_id = str(uuid.uuid4())[:8]
+            resp = client.post(f"{base}/reset", json={"episode_id": run_id})
+            if resp.status_code != 200:
+                raise RuntimeError(f"reset failed: {resp.status_code}")
+            obs_data = resp.json()
+            obs = obs_data.get("observation", {}).get("obs", [])
+            total_reward = 0.0
+            steps = 0
+
+            for step in range(max_steps):
+                action = policy(obs) if policy else random.randint(0, num_actions - 1)
+                resp = client.post(f"{base}/step", json={"action": {"value": action}})
+                if resp.status_code != 200:
+                    break
+                step_data = resp.json()
+                obs_info = step_data.get("observation", {})
+                reward = obs_info.get("reward", 0.0)
+                done = obs_info.get("done", False)
+                total_reward += reward
+                obs = obs_info.get("obs", [])
+                steps += 1
+                if done:
+                    break
+
+            results.append({
+                "run_id": run_id,
+                "env": env_name,
+                "total_reward": total_reward,
+                "steps": steps,
+            })
+
+        client.close()
+        return results
     except Exception as e:
         print(f"  HF Space rollout failed ({e}), falling back to local")
     return None

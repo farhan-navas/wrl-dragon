@@ -81,9 +81,7 @@ def train(
     print("=" * 60)
     print("WRL-DRAGON: RL^2 Meta-Training (Modal H100)")
     print(f"  GPU: {torch.cuda.get_device_name()}")
-    print(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB"
-          if hasattr(torch.cuda.get_device_properties(0), "total_mem")
-          else f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+    print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print(f"  Envs: {envs}")
     print(f"  Iterations: {iterations}")
     print(f"  Gym Space: {gym_space_url or 'disabled (subprocess fallback)'}")
@@ -121,7 +119,8 @@ def train(
         task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, lora_config)
-    model.gradient_checkpointing_enable()
+    model.warnings_issued = {}
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
     print(f"Model loaded in {time.time() - t0:.1f}s")
     print(f"  pad_token_id={tokenizer.pad_token_id}")
@@ -195,8 +194,6 @@ def train(
             prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
             )
-            # Close Qwen3's thinking block so completions start with code
-            prompt += "</think>\n\n"
             rows.append({"prompt": prompt, "env_name": env_name})
 
     random.shuffle(rows)
@@ -246,26 +243,59 @@ def train(
         if "def select_action" in clean:
             clean = clean[clean.index("def select_action"):]
 
-        # ---- Try HF Space ----
+        # ---- Try HF Space (OpenEnv protocol: /reset + /step) ----
         if gym_space_url:
             try:
                 import httpx
-                resp = httpx.post(
-                    f"{gym_space_url.rstrip('/')}/rollout",
-                    json={
-                        "env_name": env_name,
-                        "policy_code": clean,
-                        "num_episodes": num_episodes,
-                        "max_steps": 500,
-                    },
-                    timeout=120.0,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    rewards = data.get("rewards", [])
-                    crashed = data.get("crashed", 0)
-                    mean = sum(rewards) / len(rewards) if rewards else 0.0
-                    return mean, crashed
+                ns = {}
+                exec(clean, {"__builtins__": __builtins__}, ns)
+                fn = ns.get("select_action")
+                if fn is None or not callable(fn):
+                    raise ValueError("No select_action in code")
+
+                spec = ENV_SPECS.get(env_name, ENV_SPECS["CartPole-v1"])
+                n_actions = spec["num_actions"]
+                base = gym_space_url.rstrip("/")
+                client = httpx.Client(timeout=30.0)
+                rewards_list = []
+                crashed = 0
+
+                for _ in range(num_episodes):
+                    resp = client.post(f"{base}/reset", json={})
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"reset failed: {resp.status_code}")
+                    obs_data = resp.json()
+                    obs = obs_data.get("observation", {}).get("obs", [])
+                    total = 0.0
+                    ep_crashed = False
+
+                    for _ in range(500):
+                        try:
+                            a = int(fn(obs))
+                            a = a if 0 <= a < n_actions else random.randint(0, n_actions - 1)
+                        except Exception:
+                            a = random.randint(0, n_actions - 1)
+                            ep_crashed = True
+
+                        resp = client.post(f"{base}/step", json={"action": {"value": a}})
+                        if resp.status_code != 200:
+                            break
+                        step_data = resp.json()
+                        obs_info = step_data.get("observation", {})
+                        r = obs_info.get("reward", 0.0)
+                        done = obs_info.get("done", False)
+                        total += r
+                        obs = obs_info.get("obs", [])
+                        if done:
+                            break
+
+                    rewards_list.append(total)
+                    if ep_crashed:
+                        crashed += 1
+
+                client.close()
+                mean = sum(rewards_list) / len(rewards_list) if rewards_list else 0.0
+                return mean, crashed
             except Exception as e:
                 print(f"  HF Space rollout failed ({e}), falling back to subprocess")
 
@@ -330,7 +360,7 @@ def train(
     total_dataset_steps = len(dataset)
     step_counter = [0]
 
-    def reward_fn(completions: list[str], **kwargs) -> list[float]:
+    def reward_fn(completions, **kwargs) -> list[float]:
         prompts = kwargs.get("prompts", [""] * len(completions))
         rewards = []
 
@@ -340,9 +370,22 @@ def train(
         alpha = ALPHA_START + progress * (ALPHA_END - ALPHA_START)
         beta = BETA_START + progress * (BETA_END - BETA_START)
 
-        for i, raw_code in enumerate(completions):
+        for i, completion in enumerate(completions):
+            # Handle both string and conversation-dict formats
+            if isinstance(completion, list):
+                raw_code = completion[-1]["content"] if completion else ""
+            elif isinstance(completion, dict):
+                raw_code = completion.get("content", str(completion))
+            else:
+                raw_code = str(completion)
             code = strip_thinking(raw_code)
-            prompt = prompts[i] if i < len(prompts) else ""
+            prompt_raw = prompts[i] if i < len(prompts) else ""
+            if isinstance(prompt_raw, list):
+                prompt = " ".join(m.get("content", "") for m in prompt_raw)
+            elif isinstance(prompt_raw, dict):
+                prompt = prompt_raw.get("content", str(prompt_raw))
+            else:
+                prompt = str(prompt_raw)
             detected_env = "CartPole-v1"
             for en in ENV_SPECS:
                 if en in prompt:
@@ -463,7 +506,7 @@ def train(
     # ---- GRPO Training ----
     grpo_config = GRPOConfig(
         output_dir=output_dir,
-        num_generations=8,
+        num_generations=4,
         learning_rate=5e-6,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
