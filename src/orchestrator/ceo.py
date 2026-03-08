@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 
+import httpx
+
 from src.logging.events import Event, emit_event_sync
 from src.logging.orchestrator_log import (
     log_batch_results,
@@ -92,27 +94,40 @@ class CEOOrchestrator:
         self.agents[CEO_AGENT["id"]] = CEO_AGENT
         emit_event_sync(Event(
             type="agent_spawned", agent_id=CEO_AGENT["id"], tier="ceo",
+            name=CEO_AGENT["name"],
         ))
 
         self.agents[ANALYST_AGENT["id"]] = ANALYST_AGENT
         emit_event_sync(Event(
             type="agent_spawned", agent_id=ANALYST_AGENT["id"], tier="ceo",
+            name=ANALYST_AGENT["name"],
         ))
 
         for env_name in self.env_names:
             coder = make_coder_agent(env_name)
             self.agents[coder["id"]] = coder
             emit_event_sync(Event(
-                type="agent_spawned", agent_id=coder["id"], tier="coder", env=env_name,
+                type="agent_spawned", agent_id=coder["id"], tier="coder",
+                env=env_name, name=coder["name"],
             ))
 
             qa = make_qa_agent(env_name)
             self.agents[qa["id"]] = qa
             emit_event_sync(Event(
-                type="agent_spawned", agent_id=qa["id"], tier="qa", env=env_name,
+                type="agent_spawned", agent_id=qa["id"], tier="qa",
+                env=env_name, name=qa["name"],
             ))
 
         print(f"Spawned agents: {list(self.agents.keys())}")
+
+        try:
+            httpx.post(
+                "http://localhost:8000/internal/agents",
+                json=self.get_agent_list(),
+                timeout=2.0,
+            )
+        except Exception:
+            pass
 
     # ── Phase 1: Generate ────────────────────────────────────────────
 
@@ -264,6 +279,7 @@ class CEOOrchestrator:
             {
                 "id": agent["id"],
                 "tier": agent["tier"],
+                "name": agent.get("name", agent["id"]),
                 "status": "active",
                 "env": agent.get("env"),
                 "current_task": None,

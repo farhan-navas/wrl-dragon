@@ -14,10 +14,10 @@ const AgentSprites = {
     animConfig: {
         idle:      { strip: "idle_anim", frames: 6, speed: 300 },
         thinking:  { strip: "phone",     frames: 9, speed: 250 },
-        coding:    { strip: "sit",       frames: 6, speed: 200, sitting: true },
-        running:   { strip: "run",       frames: 6, speed: 150 },
-        assigning: { strip: "sit3",      frames: 6, speed: 300, sitting: true },
-        reporting: { strip: "sit2",      frames: 6, speed: 300, sitting: true },
+        coding:    { strip: "sit",       frames: 3, speed: 200, sitting: true },
+        running:   { strip: "idle_anim", frames: 6, speed: 400 },
+        assigning: { strip: "sit3",      frames: 3, speed: 300, sitting: true },
+        reporting: { strip: "sit2",      frames: 3, speed: 300, sitting: true },
     },
 
     getCharacterName(agent) {

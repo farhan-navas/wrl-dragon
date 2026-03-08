@@ -79,7 +79,12 @@ const Renderer = {
 
     setAgentState(agentId, state) {
         const agent = this.getAgent(agentId);
-        if (agent) agent.animState = state;
+        if (agent) {
+            console.log(`[Renderer] setAgentState "${agentId}" → "${state}"`);
+            agent.animState = state;
+        } else {
+            console.warn(`[Renderer] setAgentState: unknown agent "${agentId}" (known: ${this.agents.map(a => a.id).join(", ")})`);
+        }
     },
 
     showSpeechBubble(agentId, text, duration) {
@@ -87,6 +92,8 @@ const Renderer = {
         if (agent) {
             agent.speechBubble = text;
             agent.speechBubbleExpiry = performance.now() + (duration || 3000);
+        } else {
+            console.warn(`[Renderer] showSpeechBubble: unknown agent "${agentId}"`);
         }
     },
 

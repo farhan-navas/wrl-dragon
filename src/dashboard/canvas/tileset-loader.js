@@ -18,6 +18,7 @@ const TilesetLoader = {
 
     init() {
         const base = "public/Modern tiles_Free";
+        const officeBase = "public/Modern Office Revamped v1.2";
         this._promises.push(
             this.loadImage(`${base}/Interiors_free/16x16/Room_Builder_free_16x16.png`)
                 .then(img => { this.sheets.roomBuilder = img; })
@@ -25,6 +26,14 @@ const TilesetLoader = {
         this._promises.push(
             this.loadImage(`${base}/Interiors_free/16x16/Interiors_free_16x16.png`)
                 .then(img => { this.sheets.interiors = img; })
+        );
+        this._promises.push(
+            this.loadImage(`${officeBase}/1_Room_Builder_Office/Room_Builder_Office_16x16.png`)
+                .then(img => { this.sheets.rbOffice = img; })
+        );
+        this._promises.push(
+            this.loadImage(`${officeBase}/3_Modern_Office_Shadowless/Modern_Office_Shadowless_16x16.png`)
+                .then(img => { this.sheets.office = img; })
         );
     },
 

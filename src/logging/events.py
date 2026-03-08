@@ -31,6 +31,7 @@ class Event(BaseModel):
     agent_id: str | None = None
     tier: str | None = None
     env: str | None = None
+    name: str | None = None
 
     # task_assigned
     from_agent: str | None = Field(None, alias="from")
@@ -100,22 +101,16 @@ async def emit_event(event: Event):
             pass
 
 
+_API_URL = "http://localhost:8000/internal/events"
+
+
 def emit_event_sync(event: Event):
     EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(EVENTS_LOG_PATH, "a") as f:
         f.write(event.to_json() + "\n")
 
-
-def emit_event_http(event: Event, webhook_url: str):
-    """POST event JSON to a webhook URL (used by Modal → local dashboard)."""
-    import httpx
-
     try:
-        httpx.post(
-            webhook_url.rstrip("/") + "/api/events",
-            content=event.to_json(),
-            headers={"Content-Type": "application/json"},
-            timeout=5.0,
-        )
+        import httpx
+        httpx.post(_API_URL, content=event.to_json(), headers={"Content-Type": "application/json"}, timeout=2.0)
     except Exception:
-        pass  # Training must not crash if dashboard is down
+        pass
