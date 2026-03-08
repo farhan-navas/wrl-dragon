@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import traceback
@@ -15,6 +16,8 @@ from openenv.core.generic_client import GenericEnvClient
 from src.logging.events import Event, emit_event_sync
 from src.logging.orchestrator_log import log_error
 
+# HF Space URL for remote rollouts (set via env or passed explicitly)
+GYM_SPACE_URL = os.environ.get("WRL_DRAGON_GYM_URL", "")
 
 _action_space_cache: dict[str, int] = {}
 
@@ -71,6 +74,47 @@ def load_policy(code: str, num_actions: int) -> Callable[[list[float]], int]:
     return safe_policy
 
 
+def _try_remote_rollout(
+    env_name: str,
+    policy_code: str,
+    num_episodes: int,
+    max_steps: int,
+    gym_space_url: str | None = None,
+) -> list[dict] | None:
+    """Try running rollout via HF Space. Returns results list or None on failure."""
+    url = gym_space_url or GYM_SPACE_URL
+    if not url:
+        return None
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{url.rstrip('/')}/rollout",
+            json={
+                "env_name": env_name,
+                "policy_code": policy_code,
+                "num_episodes": num_episodes,
+                "max_steps": max_steps,
+            },
+            timeout=120.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            rewards = data.get("rewards", [])
+            crashed = data.get("crashed", 0)
+            results = []
+            for i, reward in enumerate(rewards):
+                results.append({
+                    "run_id": str(uuid.uuid4())[:8],
+                    "env": env_name,
+                    "total_reward": reward,
+                    "steps": max_steps,  # approximate
+                })
+            return results
+    except Exception as e:
+        print(f"  HF Space rollout failed ({e}), falling back to local")
+    return None
+
+
 def run_episodes(
     env_url: str = "http://localhost:8001",
     env_name: str = "CartPole-v1",
@@ -78,8 +122,27 @@ def run_episodes(
     max_steps: int = 500,
     agent_id: str = "qa-cartpole",
     policy_code: str | None = None,
+    gym_space_url: str | None = None,
 ) -> list[dict]:
-    """Run rollout episodes over OpenEnv WebSocket using the generated policy."""
+    """Run rollout episodes. Tries HF Space first, falls back to local OpenEnv."""
+    # Try remote HF Space first
+    if policy_code:
+        remote_results = _try_remote_rollout(
+            env_name, policy_code, num_episodes, max_steps, gym_space_url,
+        )
+        if remote_results is not None:
+            print(f"  [{env_name}] {len(remote_results)} episodes via HF Space")
+            for r in remote_results:
+                emit_event_sync(Event(
+                    type="rollout_completed",
+                    agent_id=agent_id,
+                    run_id=r["run_id"],
+                    total_reward=r["total_reward"],
+                    steps=r["steps"],
+                ))
+            return remote_results
+
+    # Fallback: local OpenEnv server
     num_actions = _get_num_actions(env_name)
 
     # Load generated policy or fall back to random

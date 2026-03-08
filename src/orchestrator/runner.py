@@ -26,15 +26,20 @@ def start_env_server(env_name: str, port: int) -> subprocess.Popen:
     return proc
 
 
+GYM_SPACE_URL = os.environ.get("WRL_DRAGON_GYM_URL", "")
+
+
 def run_batch(
     env_ports: dict[str, int],
     episodes: int,
     max_steps: int = 500,
     generated_code: dict[str, str] | None = None,
+    gym_space_url: str | None = None,
 ) -> dict[str, list[dict]]:
     """Run all envs in parallel, return batch results."""
     batch_results: dict[str, list[dict]] = {}
     generated_code = generated_code or {}
+    space_url = gym_space_url or GYM_SPACE_URL
 
     with ThreadPoolExecutor(max_workers=len(env_ports)) as pool:
         futures = {}
@@ -48,6 +53,7 @@ def run_batch(
                 max_steps=max_steps,
                 agent_id=agent_id,
                 policy_code=generated_code.get(env_name),
+                gym_space_url=space_url or None,
             )
             futures[future] = env_name
 
