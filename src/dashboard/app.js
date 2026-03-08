@@ -72,6 +72,18 @@ const App = {
             case "reward_update":
                 this.onRewardUpdate(event);
                 break;
+            case "training_started":
+                TrainingView.onTrainingStarted(event);
+                break;
+            case "training_step":
+                TrainingView.onTrainingStep(event);
+                break;
+            case "training_checkpoint":
+                TrainingView.onTrainingCheckpoint(event);
+                break;
+            case "training_completed":
+                TrainingView.onTrainingCompleted(event);
+                break;
         }
     },
 

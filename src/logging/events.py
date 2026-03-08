@@ -15,6 +15,11 @@ EventType = Literal[
     "rollout_started",
     "rollout_completed",
     "reward_update",
+    # Phase 2: training events
+    "training_started",
+    "training_step",
+    "training_checkpoint",
+    "training_completed",
 ]
 
 
@@ -47,6 +52,19 @@ class Event(BaseModel):
     # agent status
     status: str | None = None
     current_task: str | None = None
+
+    # training events (Phase 2)
+    iteration: int | None = None
+    loss: float | None = None
+    mean_rewards: dict[str, float] | None = None
+    best_rewards: dict[str, float] | None = None
+    syntax_rate: float | None = None
+    model_id: str | None = None
+    envs: list[str] | None = None
+    iterations: int | None = None
+    elapsed_min: float | None = None
+    checkpoint_path: str | None = None
+    best_code: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -86,3 +104,18 @@ def emit_event_sync(event: Event):
     EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(EVENTS_LOG_PATH, "a") as f:
         f.write(event.to_json() + "\n")
+
+
+def emit_event_http(event: Event, webhook_url: str):
+    """POST event JSON to a webhook URL (used by Modal → local dashboard)."""
+    import httpx
+
+    try:
+        httpx.post(
+            webhook_url.rstrip("/") + "/api/events",
+            content=event.to_json(),
+            headers={"Content-Type": "application/json"},
+            timeout=5.0,
+        )
+    except Exception:
+        pass  # Training must not crash if dashboard is down

@@ -3,11 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.logging.events import register_ws_broadcaster, unregister_ws_broadcaster
+from src.logging.events import (
+    EVENTS_LOG_PATH,
+    Event,
+    register_ws_broadcaster,
+    unregister_ws_broadcaster,
+)
 
 app = FastAPI(title="WRL-Dragon API")
 
@@ -32,6 +37,20 @@ async def _broadcast(message: str):
 
 
 register_ws_broadcaster(_broadcast)
+
+
+@app.post("/api/events")
+async def receive_event(request: Request):
+    """Receive event JSON from external source (e.g. Modal), broadcast to WS clients."""
+    body = await request.json()
+    event = Event(**body)
+    # Log to JSONL
+    EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(EVENTS_LOG_PATH, "a") as f:
+        f.write(event.to_json() + "\n")
+    # Broadcast to WebSocket clients
+    await _broadcast(event.to_json())
+    return {"ok": True}
 
 
 @app.get("/api/agents")

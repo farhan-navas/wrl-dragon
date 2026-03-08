@@ -17,6 +17,29 @@
             <canvas id="agent-canvas" width="800" height="600"></canvas>
         </div>
 
+        <div id="training-container" class="hidden">
+            <div id="training-header">
+                <h2>Meta-Training</h2>
+                <span id="training-status-text">Waiting...</span>
+            </div>
+            <div id="training-info">
+                <div>Model: <span id="training-model">-</span></div>
+                <div>Envs: <span id="training-envs">-</span></div>
+                <div>Progress: <span id="training-current">0</span> / <span id="training-total">-</span></div>
+                <div>Syntax: <span id="training-syntax-rate">-</span></div>
+                <div>Elapsed: <span id="training-elapsed">-</span></div>
+                <div>Final Loss: <span id="training-final-loss">-</span></div>
+            </div>
+            <div id="training-charts">
+                <canvas id="training-reward-chart" width="500" height="200"></canvas>
+                <canvas id="training-loss-chart" width="500" height="150"></canvas>
+            </div>
+            <div id="training-code-panel">
+                <h3>Best Generated Code</h3>
+                <pre id="training-best-code">No code yet</pre>
+            </div>
+        </div>
+
         <div id="side-panel" class="hidden">
             <button id="close-panel">[X]</button>
             <h2 id="panel-title">Agent Details</h2>
@@ -48,6 +71,7 @@
     <script src="canvas/agents.js"></script>
     <script src="canvas/renderer.js"></script>
     <script src="panels/reward-chart.js"></script>
+    <script src="panels/training-view.js"></script>
     <script src="panels/rollout-viewer.js"></script>
     <script src="ws/client.js"></script>
     <script src="app.js"></script>
