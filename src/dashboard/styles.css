@@ -198,6 +198,89 @@ body {
     pointer-events: none;
 }
 
+/* Training view (Phase 2) */
+#training-container {
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 560px;
+    background: #111128;
+    border: 2px solid #6bff6b;
+    padding: 15px;
+    z-index: 10;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+}
+
+#training-container.hidden {
+    display: none;
+}
+
+#canvas-container.dimmed {
+    opacity: 0.3;
+    pointer-events: none;
+}
+
+#training-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+#training-header h2 {
+    font-size: 12px;
+    color: #6bff6b;
+}
+
+#training-status-text {
+    font-size: 8px;
+    color: #ffb86b;
+}
+
+#training-info {
+    font-size: 8px;
+    line-height: 2;
+    color: #aaa;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 8px;
+}
+
+#training-info span {
+    color: #e0e0e0;
+}
+
+#training-charts {
+    margin-bottom: 10px;
+}
+
+#training-charts canvas {
+    width: 100%;
+    border: 1px solid #333;
+    margin-bottom: 8px;
+}
+
+#training-code-panel h3 {
+    font-size: 8px;
+    color: #ffb86b;
+    margin-bottom: 5px;
+}
+
+#training-best-code {
+    background: #0a0a15;
+    border: 1px solid #333;
+    padding: 8px;
+    font-size: 8px;
+    font-family: monospace;
+    color: #6bb5ff;
+    max-height: 150px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #0a0a1a; }

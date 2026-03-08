@@ -15,6 +15,11 @@ EventType = Literal[
     "rollout_started",
     "rollout_completed",
     "reward_update",
+    # Phase 2: training events
+    "training_started",
+    "training_step",
+    "training_checkpoint",
+    "training_completed",
 ]
 
 
@@ -48,6 +53,19 @@ class Event(BaseModel):
     # agent status
     status: str | None = None
     current_task: str | None = None
+
+    # training events (Phase 2)
+    iteration: int | None = None
+    loss: float | None = None
+    mean_rewards: dict[str, float] | None = None
+    best_rewards: dict[str, float] | None = None
+    syntax_rate: float | None = None
+    model_id: str | None = None
+    envs: list[str] | None = None
+    iterations: int | None = None
+    elapsed_min: float | None = None
+    checkpoint_path: str | None = None
+    best_code: str | None = None
 
     model_config = {"populate_by_name": True}
 
