@@ -8,7 +8,7 @@ class ModelConfig:
     """Parent code-generating LLM config."""
 
     model_id: str = "unsloth/Qwen3-Coder-30B-A3B-Instruct"
-    max_tokens: int = 512
+    max_tokens: int = 1024
     temperature: float = 1.0
     top_p: float = 0.95
 

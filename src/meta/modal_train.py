@@ -454,7 +454,7 @@ def train(
         gradient_accumulation_steps=4,
         max_grad_norm=1.0,
         num_train_epochs=1,
-        max_completion_length=512,
+        max_completion_length=1024,
         temperature=1.0,
         logging_steps=1,
         save_steps=25,
