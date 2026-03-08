@@ -18,6 +18,7 @@ const App = {
     RolloutViewer.init();
     RewardChart.init();
     ActivityFeed.init();
+    SoundManager.init();
 
     // Connect WebSocket
     WSClient.onEvent = (event) => this.handleEvent(event);
@@ -150,6 +151,9 @@ const App = {
 
     // Run animation via factory
     AnimationFactory.run(event.type, event);
+
+    // Play sound effect
+    SoundManager.playSFX(event.type, event);
   },
 
   _resetState() {
