@@ -209,8 +209,11 @@ def train(
             ]
             prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
-                enable_thinking=False,
             )
+            # Close Qwen3's thinking block so the model generates code
+            # directly — prevents 6 extra thinking tokens that cause
+            # Unsloth's completion_mask shape mismatch
+            prompt += "</think>\n\n"
             rows.append({"prompt": prompt, "env_name": env_name})
 
     random.shuffle(rows)
@@ -455,7 +458,7 @@ def train(
         gradient_accumulation_steps=4,
         max_grad_norm=1.0,
         num_train_epochs=1,
-        max_prompt_length=512,
+        max_prompt_length=768,
         max_completion_length=1024,
         temperature=1.0,
         logging_steps=1,
