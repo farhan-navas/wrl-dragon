@@ -210,10 +210,6 @@ def train(
             prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
             )
-            # Close Qwen3's thinking block so the model generates code
-            # directly — prevents 6 extra thinking tokens that cause
-            # Unsloth's completion_mask shape mismatch
-            prompt += "</think>\n\n"
             rows.append({"prompt": prompt, "env_name": env_name})
 
     random.shuffle(rows)
@@ -226,6 +222,10 @@ def train(
     import subprocess
     import sys
     import textwrap
+
+    def strip_thinking(text: str) -> str:
+        """Remove <think>...</think> blocks from model output."""
+        return re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
 
     def syntax_reward(code: str, num_actions: int, obs_dim: int = 4) -> float:
         """7-tier syntax scoring for finer gradient signal."""
@@ -329,7 +329,8 @@ def train(
         alpha = ALPHA_START + progress * (ALPHA_END - ALPHA_START)
         beta = BETA_START + progress * (BETA_END - BETA_START)
 
-        for i, code in enumerate(completions):
+        for i, raw_code in enumerate(completions):
+            code = strip_thinking(raw_code)
             prompt = prompts[i] if i < len(prompts) else ""
             detected_env = "CartPole-v1"
             for en in ENV_SPECS:
