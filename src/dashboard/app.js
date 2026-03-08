@@ -24,17 +24,31 @@ const App = {
         console.log("WRL-Dragon Dashboard initialized");
     },
 
+    // Default demo agents so the dashboard always shows characters
+    DEMO_AGENTS: [
+        { id: "ceo-1", tier: "ceo", name: "CEO" },
+        { id: "analyst-1", tier: "ceo", name: "Analyst" },
+        { id: "coder-1", tier: "coder", name: "Coder-1" },
+        { id: "coder-2", tier: "coder", name: "Coder-2" },
+        { id: "qa-1", tier: "qa", name: "QA-1" },
+        { id: "qa-2", tier: "qa", name: "QA-2" },
+    ],
+
     async loadAgents() {
+        let agents = [];
         try {
             const resp = await fetch("/api/agents");
-            const agents = await resp.json();
-            for (const agent of agents) {
-                if (!Renderer.getAgent(agent.id)) {
-                    Renderer.addAgent(agent);
-                }
-            }
+            agents = await resp.json();
         } catch {
-            // Server not running yet, will populate via WebSocket events
+            // Server not running yet
+        }
+
+        // Use server agents if available, otherwise spawn demo agents
+        const toSpawn = agents.length > 0 ? agents : this.DEMO_AGENTS;
+        for (const agent of toSpawn) {
+            if (!Renderer.getAgent(agent.id)) {
+                Renderer.addAgent(agent);
+            }
         }
     },
 

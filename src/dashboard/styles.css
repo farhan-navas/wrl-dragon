@@ -63,6 +63,7 @@ body {
     border: 2px solid #333;
     background: #0d0d20;
     image-rendering: pixelated;
+    image-rendering: crisp-edges;
 }
 
 #side-panel {

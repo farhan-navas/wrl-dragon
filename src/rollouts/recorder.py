@@ -48,6 +48,39 @@ def record_rollout(
     }
 
 
+def replay_with_video(
+    env_id: str,
+    run_id: str,
+    actions: list[int],
+) -> str | None:
+    """Replay a list of actions in a local gym env and record video.
+
+    Returns the video directory path, or None on failure.
+    """
+    video_dir = Path(f"outputs/videos/{env_id}")
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        env = gym.make(env_id, render_mode="rgb_array")
+        env = gym.wrappers.RecordVideo(
+            env,
+            video_folder=str(video_dir),
+            name_prefix=run_id,
+            episode_trigger=lambda _: True,
+        )
+
+        env.reset()
+        for action in actions:
+            _, _, terminated, truncated, _ = env.step(action)
+            if terminated or truncated:
+                break
+        env.close()
+        return str(video_dir)
+    except Exception as e:
+        print(f"  WARNING: Video recording failed for {run_id}: {e}")
+        return None
+
+
 if __name__ == "__main__":
     result = record_rollout()
     print(f"Recorded: {result}")

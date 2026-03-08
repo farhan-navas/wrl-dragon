@@ -1,78 +1,71 @@
-(function (global) {
-    "use strict";
+// Character sprite loader for Modern tiles_Free character strips
+const CharacterPngSprites = {
+    TILE_W: 16,
+    TILE_H: 32,
 
-    const TILE_W = 16;
-    const TILE_H = 24;
-    const DIR_DOWN = 0; // use front-facing row only
+    CHARACTERS: ["Alex", "Amelia", "Bob", "Adam"],
+    STRIPS: ["idle", "idle_anim", "run", "sit", "sit2", "sit3", "phone"],
 
-    const WALK_COLS = [0, 1, 2, 1];
-    const TYPE_COLS = [3, 4];
-    const READ_COLS = [5, 6];
+    // Frame counts for the down-facing direction
+    // idle has 1 frame per direction (4 total) — use only frame 0
+    // idle_anim has 6 frames per direction (24 total) — use first 6 for down
+    // run/sit/sit2 have 6 per direction (24 total) — first 6 = down
+    // sit3 has 6 per direction (12 total) — first 6 = down
+    // phone has 9 frames (single direction or 3x3)
+    FRAME_COUNTS: {
+        idle: 1,        // 4 total but each is a different direction — only use frame 0
+        idle_anim: 6,   // 24 total, first 6 = down-facing breathing
+        run: 6,         // 24 total, first 6 = down-facing walk
+        sit: 6,         // 24 total, first 6 = down-facing typing
+        sit2: 6,        // 24 total, first 6 = down-facing alt
+        sit3: 6,        // 12 total, first 6 = down-facing gesture
+        phone: 9,       // 9 frames
+    },
 
-    const imagePaths = [
-        "public/char_0.png",
-        "public/char_1.png",
-        "public/char_2.png",
-        "public/char_3.png",
-        "public/char_4.png",
-        "public/char_5.png",
-    ];
+    images: {},  // { Alex: { idle: Image, run: Image, ... }, ... }
+    _loadedCount: 0,
+    _totalCount: 0,
 
-    const images = [];
-    let loadedCount = 0;
-    const total = imagePaths.length;
+    init() {
+        const base = "public/Modern tiles_Free/Characters_free";
+        this._totalCount = this.CHARACTERS.length * this.STRIPS.length;
 
-    function loadAll() {
-        for (let i = 0; i < imagePaths.length; i++) {
-            const img = new Image();
-            img.onload = () => {
-                loadedCount++;
-            };
-            img.onerror = () => {
-                loadedCount++;
-            };
-            img.src = imagePaths[i];
-            images[i] = img;
+        for (const name of this.CHARACTERS) {
+            this.images[name] = {};
+            for (const strip of this.STRIPS) {
+                const img = new Image();
+                img.onload = () => { this._loadedCount++; };
+                img.onerror = () => {
+                    console.warn(`Failed to load: ${name}_${strip}`);
+                    this._loadedCount++;
+                };
+                img.src = `${base}/${name}_${strip}_16x16.png`;
+                this.images[name][strip] = img;
+            }
         }
-    }
+    },
 
-    loadAll();
+    isReady() {
+        return this._loadedCount >= this._totalCount;
+    },
 
-    function isReady() {
-        return loadedCount >= total;
-    }
+    getFrame(characterName, stripName, frameIndex) {
+        const charImages = this.images[characterName];
+        if (!charImages) return null;
+        const img = charImages[stripName];
+        if (!img || !img.complete || !img.naturalWidth) return null;
 
-    function getFrame(paletteIndex, mode, frameIndex) {
-        const idx = ((paletteIndex % images.length) + images.length) % images.length;
-        const img = images[idx];
-        if (!img || !img.complete) return null;
-
-        let cols;
-        if (mode === "walk") {
-            cols = WALK_COLS;
-        } else if (mode === "typing") {
-            cols = TYPE_COLS;
-        } else {
-            cols = READ_COLS;
-        }
-        const col = cols[frameIndex % cols.length];
-        const sx = col * TILE_W;
-        const sy = DIR_DOWN * TILE_H;
+        const maxFrames = this.FRAME_COUNTS[stripName] || 4;
+        const frame = frameIndex % maxFrames;
 
         return {
             image: img,
-            sx,
-            sy,
-            sw: TILE_W,
-            sh: TILE_H,
+            sx: frame * this.TILE_W,
+            sy: 0,
+            sw: this.TILE_W,
+            sh: this.TILE_H,
         };
     }
+};
 
-    global.CharacterPngSprites = {
-        isReady,
-        getFrame,
-        TILE_W,
-        TILE_H,
-    };
-})(typeof window !== "undefined" ? window : this);
-
+CharacterPngSprites.init();

@@ -8,6 +8,13 @@ Usage:
     uvicorn src.envs.gym_wrapper.server.app:app --port 8001
 """
 
+import os
+
+# Force SDL/pygame to use offscreen rendering (no display needed for rgb_array).
+# Without this, gymnasium's pygame renderer crashes on macOS when called from
+# a non-main thread (e.g. WebSocket handler).
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
 from openenv.core.env_server.http_server import create_app
 
 from src.envs.gym_wrapper.models import GymAction, GymObservation

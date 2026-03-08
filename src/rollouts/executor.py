@@ -107,7 +107,7 @@ def run_episodes(
                 run_id=run_id,
             ))
 
-            result = env.reset()
+            result = env.reset(episode_id=run_id)
             obs = result.observation.get("obs", [])
             episode_data = []
             total_reward = 0.0

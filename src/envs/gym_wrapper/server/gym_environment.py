@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -20,9 +21,11 @@ class GymEnvironment(Environment[GymAction, GymObservation, GymState]):
     def __init__(self, env_id: str | None = None, render_mode: str | None = None):
         super().__init__()
         self.env_id = env_id or os.environ.get("GYM_ENV_ID", "CartPole-v1")
-        self.render_mode = render_mode
+        # Default to rgb_array so we can capture video frames
+        self.render_mode = render_mode or "rgb_array"
         self.env: gym.Env | None = None
         self._state = GymState(env_id=self.env_id)
+        self._frames: list[np.ndarray] = []
 
     def _ensure_env(self) -> gym.Env:
         if self.env is None:
@@ -35,6 +38,10 @@ class GymEnvironment(Environment[GymAction, GymObservation, GymState]):
         episode_id: Optional[str] = None,
         **kwargs: Any,
     ) -> GymObservation:
+        # Save video from previous episode if we have frames
+        if self._frames:
+            self._save_video()
+
         env = self._ensure_env()
         reset_kwargs = {}
         if seed is not None:
@@ -48,6 +55,10 @@ class GymEnvironment(Environment[GymAction, GymObservation, GymState]):
             env_id=self.env_id,
             is_done=False,
         )
+
+        # Capture first frame
+        self._frames = []
+        self._capture_frame()
 
         return GymObservation(
             obs=_to_list(obs),
@@ -85,6 +96,13 @@ class GymEnvironment(Environment[GymAction, GymObservation, GymState]):
         self._state.total_reward += float(reward)
         self._state.is_done = terminated or truncated
 
+        # Capture frame for video
+        self._capture_frame()
+
+        # Save video when episode ends
+        if self._state.is_done and self._frames:
+            self._save_video()
+
         return GymObservation(
             obs=_to_list(obs),
             reward=float(reward),
@@ -106,7 +124,40 @@ class GymEnvironment(Environment[GymAction, GymObservation, GymState]):
             version="0.2.0",
         )
 
+    def _capture_frame(self) -> None:
+        """Capture an RGB frame from the gym env for video recording."""
+        if self.render_mode != "rgb_array" or self.env is None:
+            return
+        try:
+            frame = self.env.render()
+            if frame is not None:
+                self._frames.append(frame)
+        except Exception:
+            pass
+
+    def _save_video(self) -> None:
+        """Encode collected frames to MP4 using imageio."""
+        if not self._frames:
+            return
+        try:
+            import imageio.v3 as iio
+
+            video_dir = Path(f"outputs/videos/{self.env_id}")
+            video_dir.mkdir(parents=True, exist_ok=True)
+            video_path = video_dir / f"{self._state.episode_id}-episode-0.mp4"
+
+            frames_array = np.stack(self._frames)
+            iio.imwrite(str(video_path), frames_array, fps=30)
+            print(f"  Video saved: {video_path} ({len(self._frames)} frames)")
+        except Exception as e:
+            print(f"  WARNING: Video save failed: {e}")
+        finally:
+            self._frames = []
+
     def close(self) -> None:
+        # Save any remaining frames before closing
+        if self._frames:
+            self._save_video()
         if self.env is not None:
             self.env.close()
             self.env = None

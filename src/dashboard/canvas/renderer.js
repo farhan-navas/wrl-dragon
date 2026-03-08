@@ -5,6 +5,7 @@ const Renderer = {
     agents: [],
     taskLines: [],
     running: false,
+    _ready: false,
 
     init(canvasId) {
         this.canvas = document.getElementById(canvasId);
@@ -37,12 +38,16 @@ const Renderer = {
             this.canvas.style.cursor = agent ? "pointer" : "default";
         });
 
-        this.running = true;
-        this.loop(performance.now());
+        // Wait for tilesets before starting game loop
+        TilesetLoader.ready().then(() => {
+            this._ready = true;
+            Layout.invalidateBackground();
+            this.running = true;
+            this.loop(performance.now());
+        });
     },
 
     onAgentClick(agent) {
-        // Overridden by app.js
         console.log("Agent clicked:", agent.id);
     },
 
@@ -62,6 +67,7 @@ const Renderer = {
             displayName: agentData.name || agentData.id,
             speechBubble: null,
             speechBubbleExpiry: 0,
+            _tierIndex: index,
         };
         this.agents.push(agent);
         return agent;
@@ -97,22 +103,15 @@ const Renderer = {
         if (!this.running) return;
 
         const ctx = this.ctx;
-        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.imageSmoothingEnabled = false;
 
-        // Draw floors
-        Layout.drawFloors(ctx);
+        // Layer 1: Pre-rendered static background (floors, walls, furniture)
+        Layout.drawBackground(ctx);
 
-        // Draw desks
-        for (const [tier, desks] of Object.entries(Layout.deskPositions)) {
-            for (const desk of desks) {
-                Layout.drawDesk(ctx, desk.x, desk.y, desk.label);
-            }
-        }
-
-        // Draw task lines
+        // Layer 2: Task lines
         this.drawTaskLines(ctx, timestamp);
 
-        // Draw agents (z-sorted by y)
+        // Layer 3: Agents (z-sorted by y position)
         const sorted = [...this.agents].sort((a, b) =>
             (a.position?.y || 0) - (b.position?.y || 0)
         );
@@ -124,6 +123,8 @@ const Renderer = {
     },
 
     drawTaskLines(ctx, timestamp) {
+        const spriteH = CharacterPngSprites.TILE_H * AgentSprites.scale;
+
         this.taskLines = this.taskLines.filter(line => {
             const elapsed = timestamp - line.startTime;
             if (elapsed > line.duration) return false;
@@ -135,16 +136,16 @@ const Renderer = {
             const progress = elapsed / line.duration;
             const alpha = 1 - progress;
 
+            // Connect from agent center (sprite anchored at bottom-center)
+            const fromY = fromAgent.position.y - spriteH / 2;
+            const toY = toAgent.position.y - spriteH / 2;
+
             ctx.strokeStyle = `rgba(255, 255, 107, ${alpha})`;
             ctx.lineWidth = 2;
             ctx.setLineDash([4, 4]);
-            // Connect from agent center (sprite is 48px tall, bottom at position.y)
-            const fromY = fromAgent.position.y - 24;
-            const toY = toAgent.position.y - 24;
             ctx.beginPath();
             ctx.moveTo(fromAgent.position.x, fromY);
 
-            // Animated endpoint
             const endX = fromAgent.position.x + (toAgent.position.x - fromAgent.position.x) * progress;
             const endY = fromY + (toY - fromY) * progress;
             ctx.lineTo(endX, endY);

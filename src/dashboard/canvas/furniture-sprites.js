@@ -1,160 +1,140 @@
-/**
- * Pixel Agents-style office furniture sprites (from pablodelucca/pixel-agents)
- * Procedural 16x16 / 32x32 top-down office props.
- */
-(function (global) {
-    "use strict";
+// Office furniture drawing - procedural shapes with optional tileset upgrade
+// Procedural approach guarantees correct visuals; tileset coords can be added later
+const FurnitureSprites = {
 
-    const _ = "";
-
-    function drawSprite(ctx, sprite, x, y, scale) {
+    // Simple brown desk surface
+    drawDesk(ctx, x, y, w, h, scale) {
         const s = scale || 2;
-        ctx.imageSmoothingEnabled = false;
-        for (let r = 0; r < sprite.length; r++) {
-            for (let c = 0; c < (sprite[r] || []).length; c++) {
-                const color = sprite[r][c];
-                if (!color) continue;
-                ctx.fillStyle = color;
-                ctx.fillRect(Math.round(x + c * s), Math.round(y + r * s), s, s);
+        const dw = (w || 48) * s / 2;
+        const dh = (h || 16) * s / 2;
+        // Shadow
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.fillRect(x + 2, y + dh, dw, 4);
+        // Desk surface
+        ctx.fillStyle = "#6B4E0A";
+        ctx.fillRect(x, y, dw, dh);
+        ctx.fillStyle = "#8B6914";
+        ctx.fillRect(x + 1, y + 1, dw - 2, dh - 3);
+        // Highlight
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(x + 2, y + 2, dw - 4, 2);
+    },
+
+    // Small office chair
+    drawChair(ctx, x, y, scale) {
+        const s = scale || 2;
+        const sz = 10 * s / 2;
+        ctx.fillStyle = "#5C3D0A";
+        ctx.fillRect(x, y, sz, sz + 4);
+        ctx.fillStyle = "#A07828";
+        ctx.fillRect(x + 1, y + 1, sz - 2, sz - 2);
+    },
+
+    // Monitor/screen
+    drawMonitor(ctx, x, y, scale) {
+        const s = scale || 2;
+        const mw = 12 * s / 2;
+        const mh = 10 * s / 2;
+        // Screen frame
+        ctx.fillStyle = "#444";
+        ctx.fillRect(x, y, mw, mh);
+        // Screen
+        ctx.fillStyle = "#3A5C8B";
+        ctx.fillRect(x + 1, y + 1, mw - 2, mh - 3);
+        // Screen glow
+        ctx.fillStyle = "rgba(100,180,255,0.15)";
+        ctx.fillRect(x + 2, y + 2, mw - 4, mh - 5);
+        // Stand
+        ctx.fillStyle = "#444";
+        ctx.fillRect(x + mw / 2 - 2, y + mh, 4, 3);
+        ctx.fillRect(x + mw / 2 - 4, y + mh + 3, 8, 2);
+    },
+
+    // Potted plant
+    drawPlant(ctx, x, y, scale) {
+        const s = scale || 2;
+        // Pot
+        ctx.fillStyle = "#8B4422";
+        ctx.fillRect(x + 2, y + 10, 10, 8);
+        ctx.fillStyle = "#B85C3A";
+        ctx.fillRect(x + 3, y + 11, 8, 6);
+        // Leaves
+        ctx.fillStyle = "#3D8B37";
+        ctx.fillRect(x + 1, y + 2, 12, 8);
+        ctx.fillStyle = "#2D6B27";
+        ctx.fillRect(x + 3, y, 8, 4);
+        ctx.fillRect(x + 5, y + 4, 4, 6);
+    },
+
+    // Desk lamp
+    drawLamp(ctx, x, y, scale) {
+        const s = scale || 2;
+        // Shade
+        ctx.fillStyle = "#FFDD55";
+        ctx.fillRect(x + 1, y, 8, 5);
+        ctx.fillStyle = "#FFEE88";
+        ctx.fillRect(x + 2, y + 1, 6, 3);
+        // Pole
+        ctx.fillStyle = "#888";
+        ctx.fillRect(x + 4, y + 5, 2, 8);
+        // Base
+        ctx.fillStyle = "#666";
+        ctx.fillRect(x + 2, y + 13, 6, 2);
+    },
+
+    // Bookshelf
+    drawBookshelf(ctx, x, y, scale) {
+        const s = scale || 2;
+        const bw = 24;
+        const bh = 36;
+        // Frame
+        ctx.fillStyle = "#6B4E0A";
+        ctx.fillRect(x, y, bw, bh);
+        ctx.fillStyle = "#8B6914";
+        ctx.fillRect(x + 1, y + 1, bw - 2, bh - 2);
+        // Shelves
+        ctx.fillStyle = "#6B4E0A";
+        for (let i = 1; i < 4; i++) {
+            ctx.fillRect(x + 1, y + i * 9, bw - 2, 1);
+        }
+        // Books (colored rectangles)
+        const bookColors = ["#CC4444", "#4488CC", "#44AA66", "#AA55CC", "#CCAA33"];
+        for (let shelf = 0; shelf < 3; shelf++) {
+            let bx = x + 2;
+            for (let b = 0; b < 4; b++) {
+                const c = bookColors[(shelf * 4 + b) % bookColors.length];
+                ctx.fillStyle = c;
+                ctx.fillRect(bx, y + shelf * 9 + 2, 4, 7);
+                bx += 5;
             }
         }
-    }
+    },
 
-    // Chair 16x16 (from Pixel Agents CHAIR_SPRITE)
-    const CHAIR = (() => {
-        const W = "#8B6914",
-            D = "#6B4E0A",
-            B = "#5C3D0A",
-            S = "#A07828";
-        return [
-            [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-            [_, _, _, _, D, B, B, B, B, B, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-            [_, _, _, _, D, B, B, B, B, B, B, D, _, _, _, _],
-            [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-            [_, _, _, _, _, _, D, W, W, D, _, _, _, _, _, _],
-            [_, _, _, _, _, _, D, W, W, D, _, _, _, _, _, _],
-            [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-            [_, _, _, _, _, D, _, _, _, _, D, _, _, _, _, _],
-            [_, _, _, _, _, D, _, _, _, _, D, _, _, _, _, _],
-        ];
-    })();
-
-    // PC monitor 16x16 (from Pixel Agents PC_SPRITE)
-    const PC = (() => {
-        const F = "#555555",
-            S = "#3A3A5C",
-            B = "#6688CC",
-            D = "#444444";
-        return [
-            [_, _, _, F, F, F, F, F, F, F, F, F, F, _, _, _],
-            [_, _, _, F, S, S, S, S, S, S, S, S, F, _, _, _],
-            [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-            [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-            [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-            [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-            [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-            [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-            [_, _, _, F, S, S, S, S, S, S, S, S, F, _, _, _],
-            [_, _, _, F, F, F, F, F, F, F, F, F, F, _, _, _],
-            [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, D, D, D, D, _, _, _, _, _, _],
-            [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-            [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-        ];
-    })();
-
-    // Plant 16x24 (from Pixel Agents PLANT_SPRITE)
-    const PLANT = (() => {
-        const G = "#3D8B37",
-            D = "#2D6B27",
-            T = "#6B4E0A",
-            P = "#B85C3A",
-            R = "#8B4422";
-        return [
-            [_, _, _, _, _, _, G, G, _, _, _, _, _, _, _, _],
-            [_, _, _, _, _, G, G, G, G, _, _, _, _, _, _, _],
-            [_, _, _, _, G, G, D, G, G, G, _, _, _, _, _, _],
-            [_, _, _, G, G, D, G, G, D, G, G, _, _, _, _, _],
-            [_, _, G, G, G, G, G, G, G, G, G, G, _, _, _, _],
-            [_, G, G, D, G, G, G, G, G, G, D, G, G, _, _, _],
-            [_, G, G, G, G, D, G, G, D, G, G, G, G, _, _, _],
-            [_, _, G, G, G, G, G, G, G, G, G, G, _, _, _, _],
-            [_, _, _, G, G, G, D, G, G, G, G, _, _, _, _, _],
-            [_, _, _, _, G, G, G, G, G, G, _, _, _, _, _, _],
-            [_, _, _, _, _, G, G, G, G, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, T, T, _, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, T, T, _, _, _, _, _, _, _, _],
-            [_, _, _, _, _, R, R, R, R, R, _, _, _, _, _, _],
-            [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-            [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-            [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-            [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-            [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-            [_, _, _, _, _, R, P, P, P, R, _, _, _, _, _, _],
-            [_, _, _, _, _, _, R, R, R, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-        ];
-    })();
-
-    // Lamp 16x16 (from Pixel Agents LAMP_SPRITE)
-    const LAMP = (() => {
-        const Y = "#FFDD55",
-            L = "#FFEE88",
-            D = "#888888",
-            B = "#555555",
-            G = "#FFFFCC";
-        return [
-            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, G, G, G, G, _, _, _, _, _, _],
-            [_, _, _, _, _, G, Y, Y, Y, Y, G, _, _, _, _, _],
-            [_, _, _, _, G, Y, Y, L, L, Y, Y, G, _, _, _, _],
-            [_, _, _, _, Y, Y, L, L, L, L, Y, Y, _, _, _, _],
-            [_, _, _, _, Y, Y, L, L, L, L, Y, Y, _, _, _, _],
-            [_, _, _, _, _, Y, Y, Y, Y, Y, Y, _, _, _, _, _],
-            [_, _, _, _, _, _, D, D, D, D, _, _, _, _, _, _],
-            [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-            [_, _, _, _, _, _, D, D, D, D, _, _, _, _, _, _],
-            [_, _, _, _, _, B, B, B, B, B, B, _, _, _, _, _],
-            [_, _, _, _, _, B, B, B, B, B, B, _, _, _, _, _],
-            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-        ];
-    })();
-
-    // Desk surface 48x16 (simplified wood desk)
-    function drawDeskSurface(ctx, x, y, scale) {
+    // Window (wall decoration)
+    drawWindow(ctx, x, y, scale) {
         const s = scale || 2;
-        const W = "#8B6914",
-            S = "#B8922E",
-            D = "#6B4E0A";
-        const w = 48,
-            h = 16;
-        ctx.fillStyle = D;
-        ctx.fillRect(x, y, w * s, h * s);
-        ctx.fillStyle = S;
-        ctx.fillRect(x + s, y + s, (w - 2) * s, (h - 4) * s);
-        ctx.strokeStyle = W;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w * s, h * s);
-    }
+        const ww = 28;
+        const wh = 24;
+        // Frame
+        ctx.fillStyle = "#555";
+        ctx.fillRect(x, y, ww, wh);
+        // Glass
+        ctx.fillStyle = "#1a2a40";
+        ctx.fillRect(x + 2, y + 2, ww - 4, wh - 4);
+        // Sky glow
+        ctx.fillStyle = "rgba(100,140,200,0.15)";
+        ctx.fillRect(x + 3, y + 3, ww - 6, wh / 2 - 2);
+        // Cross bar
+        ctx.fillStyle = "#555";
+        ctx.fillRect(x + ww / 2 - 1, y + 2, 2, wh - 4);
+        ctx.fillRect(x + 2, y + wh / 2 - 1, ww - 4, 2);
+    },
 
-    global.FurnitureSprites = {
-        CHAIR,
-        PC,
-        PLANT,
-        LAMP,
-        drawSprite,
-        drawDeskSurface,
-    };
-})(typeof window !== "undefined" ? window : this);
+    // Rug / floor mat
+    drawRug(ctx, x, y, w, h) {
+        ctx.fillStyle = "rgba(120,40,40,0.25)";
+        ctx.fillRect(x, y, w || 80, h || 40);
+        ctx.strokeStyle = "rgba(180,80,40,0.3)";
+        ctx.strokeRect(x + 2, y + 2, (w || 80) - 4, (h || 40) - 4);
+    },
+};

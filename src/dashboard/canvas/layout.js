@@ -1,52 +1,67 @@
-// 3-tier office layout with Pixel Agents-style themed backgrounds
+// Tile-based 3-tier office layout using Room Builder floors + procedural furniture
 const Layout = {
     canvas: { width: 800, height: 600 },
+    TILE_SIZE: 16,
+    SCALE: 2,
 
-    furnitureScale: 2,
+    get SCALED_TILE() { return this.TILE_SIZE * this.SCALE; },
+
+    // Floor styles per tier (procedural rendering — reliable and clean)
+    FLOOR_STYLES: {
+        ceo: {
+            base: "#1a0a2e",
+            pattern: "wood",
+            accent: "rgba(139,105,20,0.25)",
+        },
+        coder: {
+            base: "#0a1a2e",
+            pattern: "carpet",
+            accent: "rgba(68,119,170,0.15)",
+        },
+        qa: {
+            base: "#0a2e1a",
+            pattern: "tile",
+            accent: "rgba(68,170,102,0.2)",
+        },
+    },
 
     floors: {
         ceo: {
             y: 40,
             height: 160,
             label: "TIER 1: CEO + ANALYST",
-            color: "#1a0a2e",
-            floorPattern: "executive", // wood / rug
-            accent: "#8B6914",
         },
         coder: {
             y: 210,
             height: 160,
             label: "TIER 2: CODERS",
-            color: "#0a1a2e",
-            floorPattern: "carpet", // gray carpet
-            accent: "#4477AA",
         },
         qa: {
             y: 380,
             height: 160,
             label: "TIER 3: QA WORKERS",
-            color: "#0a2e1a",
-            floorPattern: "tiled", // lab tiling
-            accent: "#44AA66",
         },
     },
 
     deskPositions: {
         ceo: [
-            { x: 250, y: 100, label: "CEO" },
-            { x: 500, y: 100, label: "Analyst" },
+            { x: 250, y: 120, label: "CEO" },
+            { x: 550, y: 120, label: "Analyst" },
         ],
         coder: [
-            { x: 150, y: 280 },
-            { x: 350, y: 280 },
-            { x: 550, y: 280 },
+            { x: 150, y: 290 },
+            { x: 400, y: 290 },
+            { x: 650, y: 290 },
         ],
         qa: [
-            { x: 150, y: 450 },
-            { x: 350, y: 450 },
-            { x: 550, y: 450 },
+            { x: 150, y: 460 },
+            { x: 400, y: 460 },
+            { x: 650, y: 460 },
         ],
     },
+
+    _bgCanvas: null,
+    _bgDirty: true,
 
     getFloorForTier(tier) {
         return this.floors[tier] || this.floors.qa;
@@ -57,195 +72,180 @@ const Layout = {
         return desks[index % desks.length];
     },
 
-    drawFloorPattern(ctx, floor, floorY) {
-        const { width } = this.canvas;
-        const height = floor.height;
+    // Pre-render static background
+    renderBackground() {
+        if (!this._bgCanvas) {
+            this._bgCanvas = document.createElement("canvas");
+            this._bgCanvas.width = this.canvas.width;
+            this._bgCanvas.height = this.canvas.height;
+        }
+        const ctx = this._bgCanvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        if (floor.floorPattern === "executive") {
-            // Wood floor - horizontal planks
-            ctx.fillStyle = floor.color;
-            ctx.fillRect(0, floorY, width, height);
-            ctx.strokeStyle = "rgba(139,105,20,0.3)";
-            ctx.lineWidth = 1;
-            for (let r = 0; r < 8; r++) {
-                const y = floorY + r * 20;
+        // Dark base
+        ctx.fillStyle = "#0d0d20";
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Draw each tier
+        for (const [tierKey, floor] of Object.entries(this.floors)) {
+            this._drawFloorTiles(ctx, tierKey, floor);
+            this._drawWallStrip(ctx, tierKey, floor);
+            this._drawTierLabel(ctx, floor);
+        }
+
+        // Draw furniture at desks
+        for (const [tier, desks] of Object.entries(this.deskPositions)) {
+            for (const desk of desks) {
+                this._drawDeskSetup(ctx, desk.x, desk.y, tier, desk.label);
+            }
+        }
+
+        // Decorations
+        this._drawDecorations(ctx);
+
+        // Tier borders
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 1;
+        for (const floor of Object.values(this.floors)) {
+            ctx.strokeRect(0, floor.y, this.canvas.width, floor.height);
+        }
+
+        this._bgDirty = false;
+    },
+
+    _drawFloorTiles(ctx, tierKey, floor) {
+        const style = this.FLOOR_STYLES[tierKey];
+        const { width } = this.canvas;
+        const y0 = floor.y;
+        const h = floor.height;
+
+        // Base color
+        ctx.fillStyle = style.base;
+        ctx.fillRect(0, y0, width, h);
+
+        // Pattern overlay
+        ctx.strokeStyle = style.accent;
+        ctx.lineWidth = 1;
+
+        if (style.pattern === "wood") {
+            // Horizontal wood planks
+            for (let r = 0; r < h; r += 20) {
                 ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(width, y);
+                ctx.moveTo(0, y0 + r);
+                ctx.lineTo(width, y0 + r);
                 ctx.stroke();
             }
-        } else if (floor.floorPattern === "carpet") {
-            // Carpet - subtle grid
-            ctx.fillStyle = floor.color;
-            ctx.fillRect(0, floorY, width, height);
-            ctx.strokeStyle = "rgba(68,119,170,0.15)";
-            ctx.setLineDash([8, 8]);
-            for (let c = 0; c < width; c += 80) {
+            // Staggered vertical joints
+            for (let r = 0; r < h; r += 20) {
+                const offset = (r / 20) % 2 === 0 ? 0 : 60;
+                for (let c = offset; c < width; c += 120) {
+                    ctx.beginPath();
+                    ctx.moveTo(c, y0 + r);
+                    ctx.lineTo(c, y0 + r + 20);
+                    ctx.stroke();
+                }
+            }
+        } else if (style.pattern === "carpet") {
+            // Subtle diamond/crosshatch
+            ctx.setLineDash([6, 6]);
+            for (let c = 0; c < width; c += 60) {
                 ctx.beginPath();
-                ctx.moveTo(c, floorY);
-                ctx.lineTo(c, floorY + height);
+                ctx.moveTo(c, y0);
+                ctx.lineTo(c, y0 + h);
+                ctx.stroke();
+            }
+            for (let r = 0; r < h; r += 60) {
+                ctx.beginPath();
+                ctx.moveTo(0, y0 + r);
+                ctx.lineTo(width, y0 + r);
                 ctx.stroke();
             }
             ctx.setLineDash([]);
         } else {
-            // Tiled (QA lab)
-            ctx.fillStyle = floor.color;
-            ctx.fillRect(0, floorY, width, height);
-            ctx.strokeStyle = "rgba(68,170,102,0.2)";
-            ctx.lineWidth = 1;
+            // Tile grid (QA lab)
             for (let c = 0; c < width; c += 40) {
-                for (let r = 0; r < height; r += 40) {
-                    ctx.strokeRect(c, floorY + r, 40, 40);
+                for (let r = 0; r < h; r += 40) {
+                    ctx.strokeRect(c, y0 + r, 40, 40);
                 }
             }
         }
     },
 
-    drawPixelRect(ctx, x, y, w, h, color, scale) {
-        const s = scale || 2;
-        ctx.fillStyle = color;
-        ctx.fillRect(Math.round(x), Math.round(y), Math.round(w * s), Math.round(h * s));
+    _drawWallStrip(ctx, tierKey, floor) {
+        // Simple procedural wall strip - reliable and clean
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
+        ctx.fillRect(0, floor.y, this.canvas.width, 24);
+
+        // Accent line at bottom of wall
+        const accents = { ceo: "#8B6914", coder: "#4477AA", qa: "#44AA66" };
+        ctx.fillStyle = accents[tierKey] || "#555";
+        ctx.fillRect(0, floor.y + 22, this.canvas.width, 2);
     },
 
-    // Pixel-ish oval table using rect strips (keeps crisp edges at integer scale)
-    drawOvalTable(ctx, centerX, centerY, radiusX, radiusY, scale) {
-        const s = scale || 2;
-        const woodDark = "#6B4E0A";
-        const woodMid = "#8B6914";
-        const woodLight = "#B8922E";
-
-        // Shadow under table
-        ctx.fillStyle = "rgba(0,0,0,0.25)";
-        ctx.fillRect(
-            Math.round(centerX - radiusX * s),
-            Math.round(centerY + (radiusY * 0.55) * s),
-            Math.round(radiusX * 2 * s),
-            Math.round(3 * s)
-        );
-
-        // Build oval from horizontal strips (each strip is 1 sprite-pixel tall)
-        for (let ry = -radiusY; ry <= radiusY; ry++) {
-            const t = 1 - (ry * ry) / (radiusY * radiusY);
-            const rx = Math.floor(radiusX * Math.sqrt(Math.max(0, t)));
-
-            // Border on top/bottom strips for definition
-            const isEdge = Math.abs(ry) >= radiusY - 1;
-            const baseColor = isEdge ? woodDark : woodMid;
-            const highlight = ry < -radiusY * 0.25 ? woodLight : baseColor;
-
-            ctx.fillStyle = highlight;
-            ctx.fillRect(
-                Math.round((centerX - rx) * s),
-                Math.round((centerY + ry) * s),
-                Math.round((rx * 2 + 1) * s),
-                Math.round(1 * s)
-            );
-        }
-
-        // Inner inlay stripe
-        ctx.strokeStyle = "rgba(255,255,255,0.12)";
-        ctx.lineWidth = Math.max(1, Math.round(1 * s));
-        ctx.beginPath();
-        ctx.ellipse(centerX * s, centerY * s, (radiusX - 2) * s, (radiusY - 2) * s, 0, 0, Math.PI * 2);
-        ctx.stroke();
+    _drawTierLabel(ctx, floor) {
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(4, floor.y + 3, 200, 16);
+        ctx.fillStyle = "#888";
+        ctx.font = "7px 'Press Start 2P', monospace";
+        ctx.fillText(floor.label, 8, floor.y + 14);
     },
 
-    drawTierBackground(ctx, tierKey, floor) {
-        const s = this.furnitureScale;
-        const y0 = floor.y;
-        const y1 = floor.y + floor.height;
+    _drawDeskSetup(ctx, x, y, tier, label) {
+        // Desk surface
+        FurnitureSprites.drawDesk(ctx, x - 30, y + 10, 48, 16, 2);
 
-        // Simple wall strip at top of each tier
-        ctx.fillStyle = "rgba(0,0,0,0.18)";
-        ctx.fillRect(0, y0, this.canvas.width, 18);
+        // Chair
+        FurnitureSprites.drawChair(ctx, x - 8, y - 6, 2);
 
-        if (tierKey === "ceo") {
-            // Executive wall accents + window panels
-            ctx.fillStyle = "rgba(255,255,255,0.06)";
-            ctx.fillRect(40, y0 + 26, 720, 2);
-            ctx.fillRect(40, y0 + 60, 720, 2);
+        // Monitor on desk
+        FurnitureSprites.drawMonitor(ctx, x + 12, y - 14, 2);
 
-            // Windows
-            ctx.fillStyle = "#101a30";
-            for (let i = 0; i < 4; i++) {
-                const wx = 90 + i * 160;
-                ctx.fillRect(wx, y0 + 30, 120, 40);
-                ctx.strokeStyle = "rgba(255,255,255,0.10)";
-                ctx.strokeRect(wx + 0.5, y0 + 30.5, 120, 40);
-                ctx.fillStyle = "rgba(120,170,255,0.10)";
-                ctx.fillRect(wx + 4, y0 + 34, 112, 32);
-                ctx.fillStyle = "#101a30";
-            }
-
-            // Big oval C-suite table in the middle of Tier 1
-            this.drawOvalTable(ctx, 400, y0 + 115, 70, 26, s / 2);
-
-            // Chairs around table (pixel props)
-            if (typeof FurnitureSprites !== "undefined") {
-                const chair = FurnitureSprites.CHAIR;
-                const drawC = (cx, cy) => FurnitureSprites.drawSprite(ctx, chair, cx, cy, s - 0.5);
-                drawC(400 - 110, y0 + 88);
-                drawC(400 + 92, y0 + 88);
-                drawC(400 - 70, y0 + 148);
-                drawC(400 + 52, y0 + 148);
-            }
+        // CEO extras
+        if (tier === "ceo" && label === "CEO") {
+            FurnitureSprites.drawLamp(ctx, x + 36, y - 4, 2);
+        }
+        if (tier === "ceo" && label === "Analyst") {
+            FurnitureSprites.drawPlant(ctx, x + 40, y - 2, 2);
         }
 
-        if (tierKey === "coder") {
-            // Coder office: cubicle partitions + extra monitors vibe
-            const wall = "rgba(255,255,255,0.06)";
-            ctx.fillStyle = wall;
-            // Horizontal partition line
-            ctx.fillRect(30, y0 + 48, 740, 2);
-            // Vertical partitions creating 3 booths aligned with desks
-            const boothXs = [90, 290, 490];
-            for (const bx of boothXs) {
-                // Left wall
-                ctx.fillRect(bx, y0 + 48, 2, 98);
-                // Right wall
-                ctx.fillRect(bx + 190, y0 + 48, 2, 98);
-                // Little header strip
-                ctx.fillRect(bx, y0 + 48, 192, 2);
+        // Coder: lamp per desk
+        if (tier === "coder") {
+            FurnitureSprites.drawLamp(ctx, x + 32, y - 2, 2);
+        }
 
-                // Pinboard / poster in each booth
-                ctx.fillStyle = "rgba(255,255,255,0.05)";
-                ctx.fillRect(bx + 16, y0 + 62, 52, 30);
-                ctx.strokeStyle = "rgba(68,119,170,0.25)";
-                ctx.strokeRect(bx + 16 + 0.5, y0 + 62 + 0.5, 52, 30);
-                ctx.fillStyle = wall;
-            }
-
-            // A couple of plants along the corridor
-            if (typeof FurnitureSprites !== "undefined") {
-                FurnitureSprites.drawSprite(ctx, FurnitureSprites.PLANT, 50, y0 + 104, s - 0.5);
-                FurnitureSprites.drawSprite(ctx, FurnitureSprites.PLANT, 740, y0 + 104, s - 0.5);
-            }
-
-            // Subtle cable/LED strip near bottom
-            ctx.strokeStyle = "rgba(68,119,170,0.20)";
-            ctx.setLineDash([6, 6]);
-            ctx.beginPath();
-            ctx.moveTo(40, y1 - 18);
-            ctx.lineTo(760, y1 - 18);
-            ctx.stroke();
-            ctx.setLineDash([]);
+        // Desk label
+        if (label) {
+            ctx.fillStyle = "#666";
+            ctx.font = "6px 'Press Start 2P', monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(label, x, y + 42);
+            ctx.textAlign = "left";
         }
     },
 
-    drawFloors(ctx) {
-        for (const [key, floor] of Object.entries(this.floors)) {
-            this.drawFloorPattern(ctx, floor, floor.y);
-            this.drawTierBackground(ctx, key, floor);
+    _drawDecorations(ctx) {
+        const ceo = this.floors.ceo;
+        const coder = this.floors.coder;
+        const qa = this.floors.qa;
 
-            ctx.strokeStyle = "#333";
-            ctx.lineWidth = 1;
-            ctx.strokeRect(0, floor.y, this.canvas.width, floor.height);
-
-            ctx.fillStyle = "#555";
-            ctx.font = "8px 'Press Start 2P', monospace";
-            ctx.fillText(floor.label, 10, floor.y + 15);
+        // CEO: windows along top wall
+        for (let i = 0; i < 3; i++) {
+            FurnitureSprites.drawWindow(ctx, 100 + i * 250, ceo.y + 28, 2);
         }
 
+        // CEO: rug in center
+        FurnitureSprites.drawRug(ctx, 350, ceo.y + 100, 100, 50);
+
+        // Coder: plants at edges
+        FurnitureSprites.drawPlant(ctx, 40, coder.y + 90, 2);
+        FurnitureSprites.drawPlant(ctx, 745, coder.y + 90, 2);
+
+        // QA: bookshelves on walls
+        FurnitureSprites.drawBookshelf(ctx, 24, qa.y + 28, 2);
+        FurnitureSprites.drawBookshelf(ctx, 750, qa.y + 28, 2);
+
+        // Divider lines between tiers
         ctx.strokeStyle = "#222";
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
@@ -257,70 +257,26 @@ const Layout = {
         ctx.setLineDash([]);
     },
 
-    drawDeskSetup(ctx, x, y, tier, label) {
-        const s = this.furnitureScale;
-
-        // Desk surface (back layer)
-        if (typeof FurnitureSprites !== "undefined") {
-            FurnitureSprites.drawDeskSurface(ctx, x - 48, y + 8, s / 2);
-        } else {
-            ctx.fillStyle = "#2a2a3a";
-            ctx.fillRect(x - 25, y + 15, 50, 12);
-            ctx.strokeStyle = "#444";
-            ctx.strokeRect(x - 25, y + 15, 50, 12);
+    drawBackground(ctx) {
+        if (this._bgDirty || !this._bgCanvas) {
+            this.renderBackground();
         }
-
-        // Chair (agent sits here)
-        if (typeof FurnitureSprites !== "undefined") {
-            FurnitureSprites.drawSprite(ctx, FurnitureSprites.CHAIR, x - 16, y - 20, s);
-            // Monitor beside the desk (to the right)
-            FurnitureSprites.drawSprite(ctx, FurnitureSprites.PC, x + 8, y - 32, s);
-        }
-
-        // CEO zone: add lamp next to first desk
-        if (tier === "ceo" && label === "CEO" && typeof FurnitureSprites !== "undefined") {
-            FurnitureSprites.drawSprite(ctx, FurnitureSprites.LAMP, x + 25, y - 20, s);
-        }
-
-        // Coder zone: add lamp per desk
-        if (tier === "coder" && typeof FurnitureSprites !== "undefined") {
-            FurnitureSprites.drawSprite(ctx, FurnitureSprites.LAMP, x + 20, y - 18, s - 0.5);
-        }
-
-        // Plant in CEO corner
-        if (tier === "ceo" && label === "Analyst" && typeof FurnitureSprites !== "undefined") {
-            FurnitureSprites.drawSprite(ctx, FurnitureSprites.PLANT, x + 30, y - 10, s - 0.5);
-        }
-
-        if (label) {
-            ctx.fillStyle = "#666";
-            ctx.font = "6px 'Press Start 2P', monospace";
-            ctx.textAlign = "center";
-            ctx.fillText(label, x, y + 38);
-            ctx.textAlign = "left";
+        if (this._bgCanvas) {
+            ctx.drawImage(this._bgCanvas, 0, 0);
         }
     },
 
-    drawDesk(ctx, x, y, label) {
-        const tier = this.getTierForPosition(y);
-        this.drawDeskSetup(ctx, x, y, tier, label);
-    },
-
-    getTierForPosition(y) {
-        if (y < 200) return "ceo";
-        if (y < 380) return "coder";
-        return "qa";
+    invalidateBackground() {
+        this._bgDirty = true;
     },
 
     getAgentAtPosition(x, y, agents) {
-        const w = 16 * 2;
-        const h = 24 * 2;
+        const w = CharacterPngSprites.TILE_W * AgentSprites.scale;
+        const h = CharacterPngSprites.TILE_H * AgentSprites.scale;
         for (const agent of agents) {
             const pos = agent.position;
             if (!pos) continue;
-            const dx = x - pos.x;
-            const dy = y - pos.y;
-            if (Math.abs(dx) < w && Math.abs(dy) < h + 8) {
+            if (Math.abs(x - pos.x) < w && Math.abs(y - pos.y) < h + 12) {
                 return agent;
             }
         }
