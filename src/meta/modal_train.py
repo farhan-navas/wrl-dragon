@@ -18,15 +18,23 @@ app = modal.App("wrl-dragon-meta-train")
 vol = modal.Volume.from_name("wrl-dragon-training", create_if_missing=True)
 
 # Container image with all dependencies
+# Use CUDA-devel base so nvcc is available for flash-attn compilation
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.from_registry(
+        "nvidia/cuda:12.4.1-devel-ubuntu22.04",
+        add_python="3.11",
+    )
+    .apt_install("git", "swig")
+    .pip_install("torch>=2.6.0", "packaging", "ninja", "numpy>=1.26.0")
     .pip_install(
-        "unsloth[cu124-ampere-torch260] @ git+https://github.com/unslothai/unsloth.git",
+        "flash-attn>=2.6.3",
+        extra_options="--no-build-isolation",
+    )
+    .pip_install(
+        "unsloth[cu124-ampere-torch260]",
         "trl>=0.17.0",
         "datasets>=3.0.0",
         "gymnasium[box2d]>=1.0.0",
-        "numpy>=1.26.0",
-        "swig",
         "pydantic>=2.0.0",
         "httpx>=0.27.0",
     )
@@ -36,10 +44,10 @@ image = (
 
 @app.function(
     image=image,
-    gpu=modal.gpu.H200(),
+    gpu="H100",
     volumes={"/vol": vol},
     timeout=4 * 3600,  # 4 hour max
-    secrets=[modal.Secret.from_name("huggingface-secret", required=False)],
+    secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 def train(
     envs: list[str] = ["CartPole-v1", "LunarLander-v3"],

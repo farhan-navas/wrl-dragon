@@ -44,13 +44,15 @@ Claude Code acts as a "CEO" orchestrator that:
   └──────────────┘
 ```
 
-### Phase 2 — RL Meta-Training
+### Phase 2 — RL Meta-Training (current)
 
-Replace Claude Code with actual RL agents that:
-- Meta-train over the orchestration process itself
-- Train sub-RL-agents for OpenEnv tasks
-- Optimize reward function generation and task assignment
-- Aggregate and learn from cross-agent results
+Replace Claude Code with GRPO (Group Relative Policy Optimization) that trains an LLM to **generate gym policies directly from environment descriptions**.
+
+- Fine-tunes Qwen3-Coder-30B with LoRA via [Unsloth](https://github.com/unslothai/unsloth) + [TRL](https://github.com/huggingface/trl)
+- GRPO reward = `0.3 × syntax_score + 0.7 × env_reward` (5 rollouts per policy)
+- Supports CartPole-v1, LunarLander-v3, Acrobot-v1, MountainCar-v0
+- Runs locally or on [Modal](https://modal.com) H200 GPUs
+- Streams training events to the dashboard via webhook or local JSONL
 
 ## Setup
 
@@ -114,7 +116,49 @@ Records a rollout video using gymnasium's built-in recorder. Saves to `outputs/v
 python -m src.rollouts.recorder
 ```
 
-### 5. Full Orchestration (end-to-end)
+### 5. Meta-Training (Phase 2)
+
+Train an LLM to generate gym policies using GRPO.
+
+```bash
+# Local training (requires GPU + Unsloth)
+python -m src.meta.runner --envs CartPole-v1 LunarLander-v3 --iterations 20
+
+# With dashboard integration
+python -m src.meta.runner --envs CartPole-v1 --iterations 10 --webhook http://localhost:8000/api/training-event
+
+# Skip dashboard events
+python -m src.meta.runner --envs CartPole-v1 --iterations 10 --no-dashboard
+
+# On Modal H200 GPU (works from any machine — no local GPU needed)
+python -m src.meta.runner --modal --envs CartPole-v1 LunarLander-v3 --iterations 20
+
+# Or directly via Modal CLI
+modal run src/meta/modal_train.py --envs CartPole-v1,LunarLander-v3 --iterations 20
+```
+
+Outputs (adapters, summaries) are saved to `outputs/meta/` locally or `/vol/outputs/meta/` on Modal.
+
+#### Live dashboard with Modal (ngrok tunnel)
+
+Modal runs remotely, so it needs a public URL to reach your local dashboard. Use ngrok to tunnel port 8000:
+
+```bash
+# Terminal 1 — start dashboard
+uvicorn src.api.server:app --port 8000
+
+# Terminal 2 — expose it with ngrok
+ngrok http 8000
+# Copy the forwarding URL, e.g. https://abc123.ngrok-free.app
+
+# Terminal 3 — run Modal training with the ngrok webhook
+python -m src.meta.runner --modal --envs CartPole-v1 --iterations 20 \
+  --webhook https://abc123.ngrok-free.app
+```
+
+Modal POSTs training events (`training_started`, `training_step`, `training_checkpoint`, `training_completed`) to `POST /api/events`, which logs them to `outputs/logs/events.jsonl` and broadcasts to WebSocket clients on the dashboard.
+
+### 6. Full Orchestration (end-to-end)
 
 Runs the complete CEO orchestration loop: spawns agents, plans via Claude, generates reward functions, runs rollouts, and analyzes results.
 
@@ -155,6 +199,15 @@ Then open [http://localhost:8000](http://localhost:8000) — agents appear in re
 ```
 wrl-dragon/
 ├── src/
+│   ├── meta/              # Phase 2: GRPO meta-training
+│   │   ├── runner.py      # Local training entry point
+│   │   ├── modal_train.py # Modal H200 deployment
+│   │   ├── trainer.py     # GRPOTrainer factory + reward function
+│   │   ├── config.py      # MetaConfig (model, reward weights, training params)
+│   │   ├── prompt.py      # ENV_SPECS + prompt construction
+│   │   ├── rewards.py     # Syntax + env reward computation (subprocess rollouts)
+│   │   ├── events.py      # TrainingEventEmitter (webhook / local JSONL)
+│   │   └── callbacks.py   # RewardAccumulator + DashboardCallback
 │   ├── orchestrator/       # CEO agent, agent definitions, runner entry point
 │   │   ├── ceo.py          # CEOOrchestrator using Claude API
 │   │   ├── agents.py       # Agent role definitions (CEO, Analyst, Coder, QA)

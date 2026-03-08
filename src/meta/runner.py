@@ -12,8 +12,6 @@ import json
 import time
 from pathlib import Path
 
-from unsloth import FastLanguageModel
-
 from src.meta.callbacks import RewardAccumulator
 from src.meta.config import MetaConfig
 from src.meta.events import TrainingEventEmitter
@@ -22,6 +20,8 @@ from src.meta.trainer import create_trainer
 
 def load_model(config: MetaConfig):
     """Load model with Unsloth + LoRA."""
+    from unsloth import FastLanguageModel
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=config.model.model_id,
         max_seq_length=2048,
@@ -149,12 +149,28 @@ if __name__ == "__main__":
     parser.add_argument("--output", default="outputs/meta")
     parser.add_argument("--webhook", default=None, help="Webhook URL for remote dashboard")
     parser.add_argument("--no-dashboard", action="store_true", help="Disable dashboard")
+    parser.add_argument("--modal", action="store_true", help="Run on Modal H200 GPU")
     args = parser.parse_args()
 
-    main(
-        env_names=args.envs,
-        num_iterations=args.iterations,
-        output_dir=args.output,
-        webhook_url=args.webhook,
-        enable_dashboard=not args.no_dashboard,
-    )
+    if args.modal:
+        import subprocess
+        import sys
+
+        envs_csv = ",".join(args.envs)
+        cmd = [
+            sys.executable, "-m", "modal", "run", "src/meta/modal_train.py",
+            "--envs", envs_csv,
+            "--iterations", str(args.iterations),
+        ]
+        if args.webhook:
+            cmd += ["--webhook", args.webhook]
+        print(f"Dispatching to Modal: {' '.join(cmd)}")
+        sys.exit(subprocess.call(cmd))
+    else:
+        main(
+            env_names=args.envs,
+            num_iterations=args.iterations,
+            output_dir=args.output,
+            webhook_url=args.webhook,
+            enable_dashboard=not args.no_dashboard,
+        )
