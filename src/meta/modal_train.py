@@ -220,6 +220,11 @@ def train(
             prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
             )
+            # Close Qwen3's thinking block in the prompt so completions
+            # start clean. Without this, the model emits <think></think>
+            # (6 tokens) inconsistently across completions, causing
+            # Unsloth's completion_mask to mismatch in compute_loss.
+            prompt += "</think>\n\n"
             rows.append({"prompt": prompt, "env_name": env_name})
 
     random.shuffle(rows)
