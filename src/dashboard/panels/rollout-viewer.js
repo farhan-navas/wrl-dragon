@@ -9,7 +9,7 @@ const RolloutViewer = {
         panel.classList.remove("hidden");
         document.getElementById("panel-title").textContent = `${agent.displayName || agent.id}`;
 
-        await this.loadRollouts(agent.id);
+        await this.loadRollouts(agent.id, agent.env);
     },
 
     close() {
@@ -17,9 +17,12 @@ const RolloutViewer = {
         document.getElementById("side-panel").classList.add("hidden");
     },
 
-    async loadRollouts(agentId) {
+    async loadRollouts(agentId, env) {
         try {
-            const resp = await fetch(`/api/rollouts/${agentId}`);
+            const url = env
+                ? `/api/rollouts/${agentId}?env=${encodeURIComponent(env)}`
+                : `/api/rollouts/${agentId}`;
+            const resp = await fetch(url);
             this.rollouts = await resp.json();
         } catch {
             this.rollouts = [];
@@ -40,7 +43,7 @@ const RolloutViewer = {
         this.rollouts.forEach((r, i) => {
             const opt = document.createElement("option");
             opt.value = i;
-            opt.textContent = `${r.run_id} | R:${r.total_reward.toFixed(1)} | ${r.steps} steps`;
+            opt.textContent = `Rollout ${i + 1} | R:${r.total_reward.toFixed(1)} | ${r.steps} steps`;
             select.appendChild(opt);
         });
         select.onchange = () => this.selectEpisode(parseInt(select.value));

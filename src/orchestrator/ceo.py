@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 
+import httpx
+
 from src.logging.events import Event, emit_event_sync
 from src.logging.orchestrator_log import (
     log_batch_results,
@@ -113,6 +115,15 @@ class CEOOrchestrator:
             ))
 
         print(f"Spawned agents: {list(self.agents.keys())}")
+
+        try:
+            httpx.post(
+                "http://localhost:8000/internal/agents",
+                json=self.get_agent_list(),
+                timeout=2.0,
+            )
+        except Exception:
+            pass
 
     # ── Phase 1: Generate ────────────────────────────────────────────
 

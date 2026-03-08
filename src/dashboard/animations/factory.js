@@ -12,11 +12,14 @@ const AnimationFactory = {
     run(key, context = {}) {
         const fn = this._registry[key];
         if (fn) {
+            console.log(`[AnimationFactory] running "${key}"`, context);
             try {
                 fn(context);
             } catch (e) {
                 console.warn(`AnimationFactory.run("${key}"):`, e);
             }
+        } else {
+            console.warn(`[AnimationFactory] no handler for "${key}"`);
         }
     },
 

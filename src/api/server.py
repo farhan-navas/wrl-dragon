@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,8 +22,9 @@ def set_agents(agents: list[dict]):
 
 
 async def _broadcast(message: str):
+    global _ws_connections
     dead = set()
-    for ws in _ws_connections:
+    for ws in list(_ws_connections):
         try:
             await ws.send_text(message)
         except Exception:
@@ -34,19 +35,35 @@ async def _broadcast(message: str):
 register_ws_broadcaster(_broadcast)
 
 
+@app.post("/internal/events")
+async def post_event(request: Request):
+    body = await request.body()
+    await _broadcast(body.decode())
+    return {"ok": True}
+
+
+@app.post("/internal/agents")
+async def post_agents(request: Request):
+    global _agents
+    _agents = await request.json()
+    return {"ok": True}
+
+
 @app.get("/api/agents")
 def get_agents():
     return _agents
 
 
 @app.get("/api/rollouts/{agent_id}")
-def get_rollouts(agent_id: str):
+def get_rollouts(agent_id: str, env: str | None = None):
     rollouts = []
     rollout_dirs = Path("outputs/rollouts").glob("*")
     for env_dir in rollout_dirs:
         if not env_dir.is_dir():
             continue
-        for log_file in env_dir.glob("*.jsonl"):
+        if env and env_dir.name != env:
+            continue
+        for log_file in sorted(env_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime):
             run_id = log_file.stem
             lines = log_file.read_text().strip().split("\n")
             if not lines or not lines[0]:

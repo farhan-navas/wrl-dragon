@@ -82,7 +82,16 @@ async def emit_event(event: Event):
             pass
 
 
+_API_URL = "http://localhost:8000/internal/events"
+
+
 def emit_event_sync(event: Event):
     EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(EVENTS_LOG_PATH, "a") as f:
         f.write(event.to_json() + "\n")
+
+    try:
+        import httpx
+        httpx.post(_API_URL, content=event.to_json(), headers={"Content-Type": "application/json"}, timeout=2.0)
+    except Exception:
+        pass
