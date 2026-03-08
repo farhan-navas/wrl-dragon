@@ -176,54 +176,141 @@ def train(
         "Output ONLY valid Python code, no markdown, no explanation."
     )
 
-    # ---- Build prompts dataset ----
-    import random
-    rows = []
-    for _ in range(iterations):
-        for env_name in envs:
-            spec = ENV_SPECS.get(env_name, ENV_SPECS["CartPole-v1"])
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Environment: {env_name}\n"
-                    f"Details: {spec['prompt_hint']}\n\n"
-                    f"Write `def select_action(obs: list[float]) -> int:` "
-                    f"that returns the best action. Self-contained, may use math/random/numpy."
-                )},
-            ]
-            prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True,
-            )
-            rows.append({"prompt": prompt, "env_name": env_name})
-
-    random.shuffle(rows)
-    dataset = Dataset.from_list(rows)
-    print(f"Dataset: {len(dataset)} prompts")
-
-    # ---- Reward functions ----
+    # ---- Reward Aggregator (percentile + improvement + self-retrieval) ----
     import ast
+    import random
     import re
     import subprocess
     import sys
     import textwrap
+    from collections import deque
 
+    class RewardAggregator:
+        """Per-env percentile ranking with improvement tracking and best-code memory.
+
+        Replaces fixed baseline/solved normalization. Auto-normalizes across envs
+        with different reward scales by ranking new scores against a rolling buffer.
+        """
+
+        def __init__(self, buffer_size: int = 200):
+            self.buffers: dict[str, deque] = {}
+            self.best_reward: dict[str, float] = {}
+            self.best_code: dict[str, str] = {}
+            self.buffer_size = buffer_size
+
+        def score(self, env_name: str, raw_reward: float) -> float:
+            """Score a raw reward as percentile rank in the env's history.
+
+            Returns value in [0.0, 1.2]:
+              - percentile component: [0, 1] based on rank in buffer
+              - improvement bonus: +0.2 if this beats the env's personal best
+            """
+            buf = self.buffers.setdefault(env_name, deque(maxlen=self.buffer_size))
+
+            # Percentile rank (auto-normalizes across envs)
+            if len(buf) > 0:
+                percentile = sum(1 for r in buf if raw_reward > r) / len(buf)
+            else:
+                percentile = 0.5  # first sample gets neutral score
+
+            # Improvement bonus (beats personal best)
+            prev_best = self.best_reward.get(env_name, float("-inf"))
+            improvement = 0.2 if raw_reward > prev_best else 0.0
+            if raw_reward > prev_best:
+                self.best_reward[env_name] = raw_reward
+
+            buf.append(raw_reward)
+            return percentile + improvement
+
+        def update_best_code(self, env_name: str, code: str, raw_reward: float):
+            """Track best-performing code per env for self-retrieval."""
+            prev = self.best_reward.get(env_name, float("-inf"))
+            if raw_reward >= prev:
+                self.best_code[env_name] = code
+
+        def get_best_code(self, env_name: str) -> str | None:
+            return self.best_code.get(env_name)
+
+        def summary(self) -> dict:
+            return {
+                env: {
+                    "best": self.best_reward.get(env, 0),
+                    "buffer_size": len(self.buffers.get(env, [])),
+                    "median": sorted(self.buffers.get(env, [0]))[len(self.buffers.get(env, [0])) // 2],
+                }
+                for env in self.buffers
+            }
+
+    aggregator = RewardAggregator(buffer_size=200)
+
+    # ---- Build prompts with self-retrieval ----
+    def build_round_dataset(round_num: int, prompts_per_env: int) -> Dataset:
+        """Build a dataset for one training round.
+
+        Round 0: basic prompts (no prior code).
+        Round 1+: injects best-so-far code per env as context for improvement.
+        """
+        rows = []
+        for _ in range(prompts_per_env):
+            for env_name in envs:
+                spec = ENV_SPECS.get(env_name, ENV_SPECS["CartPole-v1"])
+                best_code = aggregator.get_best_code(env_name) if round_num > 0 else None
+
+                user_content = (
+                    f"Environment: {env_name}\n"
+                    f"Details: {spec['prompt_hint']}\n\n"
+                )
+                if best_code:
+                    best_r = aggregator.best_reward.get(env_name, 0)
+                    user_content += (
+                        f"A previous policy achieved avg_reward={best_r:.1f}:\n"
+                        f"```python\n{best_code}\n```\n\n"
+                        f"Write an improved version. "
+                    )
+                user_content += (
+                    f"Write `def select_action(obs: list[float]) -> int:` "
+                    f"that returns the best action. Self-contained, may use math/random/numpy."
+                )
+
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ]
+                prompt = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True,
+                )
+                rows.append({"prompt": prompt, "env_name": env_name})
+
+        random.shuffle(rows)
+        return Dataset.from_list(rows)
+
+    # ---- Reward helpers ----
     def strip_thinking(text: str) -> str:
-        """Remove <think>...</think> blocks from model output."""
-        return re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
+        """Remove <think>...</think> blocks from model output.
+        Also handles unclosed <think> tags (model ran out of tokens mid-thought).
+        """
+        text = re.sub(r"<think>[\s\S]*?</think>\s*", "", text)
+        text = re.sub(r"<think>[\s\S]*$", "", text)
+        return text.strip()
+
+    def clean_code(raw: str) -> str:
+        """Extract select_action function from raw model output."""
+        code = strip_thinking(raw)
+        code = re.sub(r"^```(?:python)?\s*\n?", "", code.strip())
+        code = re.sub(r"\n?```\s*$", "", code.strip())
+        if "def select_action" in code:
+            code = code[code.index("def select_action"):]
+        return code
 
     def syntax_reward(code: str, num_actions: int, obs_dim: int = 4) -> float:
         """7-tier syntax scoring for finer gradient signal."""
-        clean = re.sub(r"^```(?:python)?\s*\n?", "", code.strip())
-        clean = re.sub(r"\n?```\s*$", "", clean.strip())
-        if "def select_action" in clean:
-            clean = clean[clean.index("def select_action"):]
         try:
-            ast.parse(clean)
+            ast.parse(code)
         except SyntaxError:
             return 0.0
         ns = {}
         try:
-            exec(clean, {"__builtins__": __builtins__}, ns)
+            exec(code, {"__builtins__": __builtins__}, ns)
         except Exception:
             return 0.1
         if "select_action" not in ns:
@@ -238,17 +325,12 @@ def train(
 
     def env_reward(code: str, env_name: str, num_episodes: int = 5) -> tuple[float, int]:
         """Run policy in gym. Try HF Space first, fall back to subprocess."""
-        clean = re.sub(r"^```(?:python)?\s*\n?", "", code.strip())
-        clean = re.sub(r"\n?```\s*$", "", clean.strip())
-        if "def select_action" in clean:
-            clean = clean[clean.index("def select_action"):]
-
         # ---- Try HF Space (OpenEnv protocol: /reset + /step) ----
         if gym_space_url:
             try:
                 import httpx
                 ns = {}
-                exec(clean, {"__builtins__": __builtins__}, ns)
+                exec(code, {"__builtins__": __builtins__}, ns)
                 fn = ns.get("select_action")
                 if fn is None or not callable(fn):
                     raise ValueError("No select_action in code")
@@ -302,7 +384,7 @@ def train(
         # ---- Fallback: local subprocess ----
         script = textwrap.dedent(f"""\
             import json, random, gymnasium as gym
-            code = {repr(clean)}
+            code = {repr(code)}
             ns = {{}}
             try:
                 exec(code, {{"__builtins__": __builtins__}}, ns)
@@ -352,33 +434,25 @@ def train(
         mean = sum(rewards) / len(rewards) if rewards else 0.0
         return mean, crashed
 
-    # Curriculum + reward config
-    ALPHA_START, ALPHA_END = 0.5, 0.15   # syntax weight: high early, low late
-    BETA_START, BETA_END = 0.5, 0.85     # env weight: low early, high late
-    ENV_EVAL_GATE = 0.4                   # min syntax score to try env rollouts
-    CRASH_PENALTY = -0.1                  # per crashed episode
-    total_dataset_steps = len(dataset)
-    step_counter = [0]
+    # ---- Reward function (percentile + improvement) ----
+    ENV_EVAL_GATE = 0.4
+    CRASH_PENALTY = -0.1
 
     def reward_fn(completions, **kwargs) -> list[float]:
         prompts = kwargs.get("prompts", [""] * len(completions))
         rewards = []
 
-        progress = min(step_counter[0] / max(total_dataset_steps, 1), 1.0)
-        step_counter[0] += 1
-
-        alpha = ALPHA_START + progress * (ALPHA_END - ALPHA_START)
-        beta = BETA_START + progress * (BETA_END - BETA_START)
-
         for i, completion in enumerate(completions):
             # Handle both string and conversation-dict formats
             if isinstance(completion, list):
-                raw_code = completion[-1]["content"] if completion else ""
+                raw_text = completion[-1]["content"] if completion else ""
             elif isinstance(completion, dict):
-                raw_code = completion.get("content", str(completion))
+                raw_text = completion.get("content", str(completion))
             else:
-                raw_code = str(completion)
-            code = strip_thinking(raw_code)
+                raw_text = str(completion)
+
+            code = clean_code(raw_text)
+
             prompt_raw = prompts[i] if i < len(prompts) else ""
             if isinstance(prompt_raw, list):
                 prompt = " ".join(m.get("content", "") for m in prompt_raw)
@@ -386,6 +460,7 @@ def train(
                 prompt = prompt_raw.get("content", str(prompt_raw))
             else:
                 prompt = str(prompt_raw)
+
             detected_env = "CartPole-v1"
             for en in ENV_SPECS:
                 if en in prompt:
@@ -395,16 +470,26 @@ def train(
 
             r_syn = syntax_reward(code, spec["num_actions"], obs_dim=spec.get("obs_dim", 4))
 
+            # Diagnostic: log why completions fail
+            if r_syn == 0.0:
+                has_think = "<think>" in raw_text
+                closed = "</think>" in raw_text
+                has_fn = "def select_action" in code
+                print(f"    DIAG [{detected_env}] syn=0 | len={len(raw_text)} "
+                      f"think={has_think} closed={closed} "
+                      f"has_fn={has_fn} | code[:120]={repr(code[:120])}")
+
             crashed = 0
             raw = 0.0
+            r_perc = 0.0
             if r_syn >= ENV_EVAL_GATE:
                 raw, crashed = env_reward(code, detected_env)
-                baseline, solved = spec["baseline"], spec["solved"]
-                r_env = max(0.0, min(1.0, (raw - baseline) / (solved - baseline)))
-            else:
-                r_env = 0.0
+                r_perc = aggregator.score(detected_env, raw)
+                aggregator.update_best_code(detected_env, code, raw)
 
-            total = alpha * r_syn + beta * r_env
+            # Reward = syntax (gates entry) + percentile (auto-normalized cross-env)
+            # Syntax weight: 0.3 (just needs to pass), env percentile: 0.7 (drives learning)
+            total = 0.3 * r_syn + 0.7 * r_perc
             if crashed > 0:
                 total += CRASH_PENALTY * crashed
             total = max(total, 0.0)
@@ -412,7 +497,8 @@ def train(
             rewards.append(total)
             if accumulator is not None:
                 accumulator.record(detected_env, total, r_syn, code)
-            print(f"  [{detected_env}] syn={r_syn:.1f} raw={raw:.1f} env={r_env:.2f} R={total:.3f} crash={crashed} prog={progress:.2f}")
+            is_best = "NEW_BEST" if raw >= aggregator.best_reward.get(detected_env, float("-inf")) and r_syn >= ENV_EVAL_GATE else ""
+            print(f"  [{detected_env}] syn={r_syn:.1f} raw={raw:.1f} pctl={r_perc:.2f} R={total:.3f} crash={crashed} {is_best}")
 
         return rewards
 
@@ -503,40 +589,71 @@ def train(
 
         dashboard_cb = _DashboardCB()
 
-    # ---- GRPO Training ----
-    grpo_config = GRPOConfig(
-        output_dir=output_dir,
-        num_generations=4,
-        learning_rate=5e-6,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        max_grad_norm=1.0,
-        num_train_epochs=1,
-        max_prompt_length=768,
-        max_completion_length=1024,
-        temperature=1.0,
-        logging_steps=1,
-        save_steps=25,
-        save_total_limit=5,
-        bf16=True,
-        report_to="none",
-    )
+    # ---- Multi-round GRPO Training with self-retrieval ----
+    num_rounds = max(1, iterations // 10)
+    prompts_per_env = max(iterations // num_rounds, 5)
+    print(f"\nTraining plan: {num_rounds} rounds x {prompts_per_env} prompts/env")
+    print(f"  Self-retrieval: best code injected into prompts from round 2 onward\n")
 
-    trainer = GRPOTrainer(
-        model=model,
-        processing_class=tokenizer,
-        reward_funcs=reward_fn,
-        args=grpo_config,
-        train_dataset=dataset,
-        callbacks=[dashboard_cb] if dashboard_cb else None,
-    )
-
-    print("\nStarting GRPO training...")
     t0 = time.time()
-    result = trainer.train()
+    last_loss = 0.0
+
+    for round_num in range(num_rounds):
+        print(f"\n{'='*60}")
+        print(f"  ROUND {round_num + 1}/{num_rounds}")
+        if round_num > 0:
+            for env_name in envs:
+                best = aggregator.best_reward.get(env_name)
+                if best is not None:
+                    print(f"    {env_name}: best={best:.1f}, buffer={len(aggregator.buffers.get(env_name, []))}")
+                    has_code = aggregator.get_best_code(env_name) is not None
+                    print(f"      self-retrieval: {'injecting best code' if has_code else 'no code yet'}")
+        print(f"{'='*60}")
+
+        dataset = build_round_dataset(round_num, prompts_per_env)
+        print(f"  Dataset: {len(dataset)} prompts")
+
+        grpo_config = GRPOConfig(
+            output_dir=output_dir,
+            num_generations=4,
+            learning_rate=5e-6,
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=4,
+            max_grad_norm=1.0,
+            num_train_epochs=1,
+            max_prompt_length=1024,
+            max_completion_length=2048,
+            temperature=1.0,
+            logging_steps=1,
+            save_steps=25,
+            save_total_limit=5,
+            bf16=True,
+            report_to="none",
+        )
+
+        trainer = GRPOTrainer(
+            model=model,
+            processing_class=tokenizer,
+            reward_funcs=reward_fn,
+            args=grpo_config,
+            train_dataset=dataset,
+            callbacks=[dashboard_cb] if dashboard_cb else None,
+        )
+
+        result = trainer.train()
+        last_loss = result.training_loss
+
+        # Clean up trainer to free VRAM before next round
+        del trainer
+        torch.cuda.empty_cache()
+
     elapsed = time.time() - t0
 
-    print(f"\nDone in {elapsed/60:.1f} min | Loss: {result.training_loss:.4f}")
+    # ---- Final summary ----
+    print(f"\nDone in {elapsed/60:.1f} min | Loss: {last_loss:.4f}")
+    print(f"\nReward aggregator summary:")
+    for env_name, stats in aggregator.summary().items():
+        print(f"  {env_name}: best={stats['best']:.1f}, median={stats['median']:.1f}, samples={stats['buffer_size']}")
 
     # Save final adapter
     final_path = f"{output_dir}/final_adapter"
@@ -551,7 +668,7 @@ def train(
         "envs": envs,
         "iterations": iterations,
         "elapsed_min": elapsed / 60,
-        "loss": result.training_loss,
+        "loss": last_loss,
         "trainable": trainable_params,
         "total": total_params,
     }
