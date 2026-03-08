@@ -22,41 +22,49 @@ from src.meta.config import RewardConfig
 # Syntax reward (fast, no gym server needed)
 # ---------------------------------------------------------------------------
 
-def compute_syntax_reward(code: str, num_actions: int) -> float:
-    """Grade generated code on a 0-1 scale.
+def compute_syntax_reward(code: str, num_actions: int, obs_dim: int = 4) -> float:
+    """Grade generated code on a 7-tier scale for finer gradient signal.
 
-    0.0 = doesn't parse
-    0.3 = parses but no select_action
-    0.7 = select_action exists but crashes on dummy input
-    1.0 = runs correctly and returns valid int
+    0.0 = doesn't parse at all
+    0.1 = parses but crashes on exec (import errors, name errors, etc.)
+    0.2 = executes but no select_action function defined
+    0.4 = select_action exists but is not callable
+    0.6 = select_action callable but crashes on dummy obs
+    0.8 = runs but returns out-of-range action
+    1.0 = runs correctly and returns valid int in [0, num_actions)
     """
     clean = _strip_fences(code)
 
-    # Parse
+    # Tier 0: Parse
     try:
         ast.parse(clean)
     except SyntaxError:
         return 0.0
 
-    # Exec
+    # Tier 1: Exec
     ns: dict = {}
     try:
         exec(clean, {"__builtins__": __builtins__}, ns)
     except Exception:
-        return 0.0
+        return 0.1
 
-    if "select_action" not in ns or not callable(ns["select_action"]):
-        return 0.3
+    # Tier 2: select_action defined
+    if "select_action" not in ns:
+        return 0.2
 
-    # Test call
-    dummy_obs = [0.0] * 8
+    # Tier 3: callable
+    if not callable(ns["select_action"]):
+        return 0.4
+
+    # Tier 4-5: Test call with correct obs dimension
+    dummy_obs = [0.0] * obs_dim
     try:
         result = int(ns["select_action"](dummy_obs))
         if 0 <= result < num_actions:
             return 1.0
-        return 0.7
+        return 0.8
     except Exception:
-        return 0.7
+        return 0.6
 
 
 # ---------------------------------------------------------------------------
@@ -68,10 +76,10 @@ def compute_env_reward(
     env_name: str,
     num_episodes: int = 5,
     max_steps: int = 500,
-) -> tuple[float, list[dict]]:
+) -> tuple[float, list[dict], int]:
     """Run the policy locally in a gym env (no server needed).
 
-    Returns (mean_total_reward, per_episode_results).
+    Returns (mean_total_reward, per_episode_results, crashed_count).
     Runs in a subprocess to isolate crashes.
     """
     # Write a self-contained eval script
@@ -131,10 +139,15 @@ def compute_env_reward(
         episodes = []
 
     if not episodes:
-        return 0.0, []
+        return 0.0, [], 0
 
-    mean_reward = sum(e["total_reward"] for e in episodes) / len(episodes)
-    return mean_reward, episodes
+    successful = [e for e in episodes if e.get("total_reward") is not None]
+    crashed = len(episodes) - len(successful)
+    if not successful:
+        return 0.0, episodes, crashed
+
+    mean_reward = sum(e["total_reward"] for e in successful) / len(successful)
+    return mean_reward, episodes, crashed
 
 
 def normalize_env_reward(
@@ -155,9 +168,28 @@ def compute_total_reward(
     r_syntax: float,
     r_env_normalized: float,
     config: RewardConfig,
+    progress: float = 1.0,
+    crashed_episodes: int = 0,
 ) -> float:
-    """Combine syntax and environment rewards."""
-    return config.alpha_syntax * r_syntax + config.beta_env * r_env_normalized
+    """Combine syntax and environment rewards with curriculum weighting.
+
+    Args:
+        progress: Training progress in [0, 1]. 0=start, 1=end.
+            Used to interpolate between start/end weights.
+        crashed_episodes: Number of episodes that crashed during env eval.
+            Each crash applies a penalty to discourage broken policies.
+    """
+    # Curriculum: interpolate weights based on training progress
+    alpha = config.alpha_syntax_start + progress * (config.alpha_syntax_end - config.alpha_syntax_start)
+    beta = config.beta_env_start + progress * (config.beta_env_end - config.beta_env_start)
+
+    total = alpha * r_syntax + beta * r_env_normalized
+
+    # Crash penalty: negative signal for policies that error during rollouts
+    if crashed_episodes > 0:
+        total += config.crash_penalty * crashed_episodes
+
+    return max(total, 0.0)
 
 
 # ---------------------------------------------------------------------------

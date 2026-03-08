@@ -33,7 +33,7 @@ async def _broadcast(message: str):
             await ws.send_text(message)
         except Exception:
             dead.add(ws)
-    _ws_connections -= dead
+    _ws_connections.difference_update(dead)
 
 
 register_ws_broadcaster(_broadcast)

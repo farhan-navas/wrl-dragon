@@ -92,6 +92,16 @@ def train(
     from datasets import Dataset
     from trl import GRPOConfig, GRPOTrainer
 
+    # Patch torch._grouped_mm to handle mixed dtypes (float32 inputs + bf16 weights)
+    # caused by gradient checkpointing recomputation dropping autocast context
+    if hasattr(torch, "_grouped_mm"):
+        _orig_grouped_mm = torch._grouped_mm
+        def _patched_grouped_mm(inputs, weight, **kwargs):
+            if inputs.dtype != weight.dtype:
+                inputs = inputs.to(weight.dtype)
+            return _orig_grouped_mm(inputs, weight, **kwargs)
+        torch._grouped_mm = _patched_grouped_mm
+
     output_dir = "/vol/outputs/meta"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -109,6 +119,7 @@ def train(
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_id,
         max_seq_length=2048,
+        dtype=torch.bfloat16,
         load_in_4bit=True,
         fast_inference=False,
     )
@@ -131,39 +142,47 @@ def train(
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  {trainable:,} trainable / {total:,} total ({trainable/total*100:.2f}%)")
 
-    # ---- Environment specs ----
+    # ---- Environment specs (enriched with strategy hints) ----
     ENV_SPECS = {
         "CartPole-v1": {
-            "num_actions": 2,
+            "obs_dim": 4, "num_actions": 2,
             "baseline": 20.0, "solved": 500.0,
             "prompt_hint": (
-                "obs[0]=cart_pos, obs[1]=cart_vel, obs[2]=pole_angle, obs[3]=pole_ang_vel. "
-                "Action 0=left, 1=right. Keep pole balanced."
+                "obs[0]=cart_pos [-4.8,4.8], obs[1]=cart_vel, obs[2]=pole_angle [-0.418,0.418] rad, obs[3]=pole_ang_vel. "
+                "Action 0=left, 1=right. Keep pole balanced.\n"
+                "Heuristic: push right if (angle + angular_velocity) > 0, else left. PD controller on obs[2],obs[3] is near-optimal.\n"
+                "Failure: episode ends if angle > 0.418 rad or cart exits [-4.8, 4.8]."
             ),
         },
         "LunarLander-v3": {
-            "num_actions": 4,
+            "obs_dim": 8, "num_actions": 4,
             "baseline": -200.0, "solved": 200.0,
             "prompt_hint": (
                 "obs[0]=x, obs[1]=y, obs[2]=vx, obs[3]=vy, obs[4]=angle, obs[5]=ang_vel, "
-                "obs[6]=left_leg, obs[7]=right_leg. "
-                "Action 0=noop, 1=left, 2=main, 3=right. Land softly."
+                "obs[6]=left_leg_contact, obs[7]=right_leg_contact. "
+                "Action 0=noop, 1=left, 2=main, 3=right. Land softly.\n"
+                "Heuristic: fire main engine when vy < -0.1. Use left/right to correct angle and drift. Stop when legs touch.\n"
+                "Failure: crash (high velocity) gives -100. Fuel costs reward."
             ),
         },
         "Acrobot-v1": {
-            "num_actions": 3,
+            "obs_dim": 6, "num_actions": 3,
             "baseline": -500.0, "solved": -100.0,
             "prompt_hint": (
-                "obs=[cos(t1), sin(t1), cos(t2), sin(t2), dt1, dt2]. "
-                "Action 0=neg, 1=none, 2=pos torque. Swing tip above line."
+                "obs=[cos(t1), sin(t1), cos(t2), sin(t2), dt1, dt2]. dt1 in [-12.57,12.57], dt2 in [-28.27,28.27]. "
+                "Action 0=neg, 1=none, 2=pos torque. Swing tip above line.\n"
+                "Heuristic: apply torque in direction of angular velocity (pump like a swing). When dt1 > 0, positive torque.\n"
+                "Failure: max 500 steps, reward=-1/step. Random policy ≈ -500."
             ),
         },
         "MountainCar-v0": {
-            "num_actions": 3,
+            "obs_dim": 2, "num_actions": 3,
             "baseline": -200.0, "solved": -110.0,
             "prompt_hint": (
-                "obs[0]=position, obs[1]=velocity. "
-                "Action 0=left, 1=none, 2=right. Reach flag at pos>=0.5."
+                "obs[0]=position [-1.2,0.6], obs[1]=velocity [-0.07,0.07]. "
+                "Action 0=left, 1=none, 2=right. Reach flag at pos>=0.5.\n"
+                "Heuristic: push in direction of velocity (action=2 if vel>0, else 0). This builds momentum via resonance.\n"
+                "Failure: max 200 steps. Can't climb in one push — must rock back and forth."
             ),
         },
     }
@@ -204,7 +223,8 @@ def train(
     import sys
     import textwrap
 
-    def syntax_reward(code: str, num_actions: int) -> float:
+    def syntax_reward(code: str, num_actions: int, obs_dim: int = 4) -> float:
+        """7-tier syntax scoring for finer gradient signal."""
         clean = re.sub(r"^```(?:python)?\s*\n?", "", code.strip())
         clean = re.sub(r"\n?```\s*$", "", clean.strip())
         if "def select_action" in clean:
@@ -217,17 +237,19 @@ def train(
         try:
             exec(clean, {"__builtins__": __builtins__}, ns)
         except Exception:
-            return 0.0
-        if "select_action" not in ns or not callable(ns["select_action"]):
-            return 0.3
+            return 0.1
+        if "select_action" not in ns:
+            return 0.2
+        if not callable(ns["select_action"]):
+            return 0.4
         try:
-            result = int(ns["select_action"]([0.0] * 8))
-            return 1.0 if 0 <= result < num_actions else 0.7
+            result = int(ns["select_action"]([0.0] * obs_dim))
+            return 1.0 if 0 <= result < num_actions else 0.8
         except Exception:
-            return 0.7
+            return 0.6
 
-    def env_reward(code: str, env_name: str, num_episodes: int = 5) -> float:
-        """Run policy in gym and return mean reward."""
+    def env_reward(code: str, env_name: str, num_episodes: int = 5) -> tuple[float, int]:
+        """Run policy in gym, return (mean_reward, crashed_count)."""
         clean = re.sub(r"^```(?:python)?\s*\n?", "", code.strip())
         clean = re.sub(r"\n?```\s*$", "", clean.strip())
         if "def select_action" in clean:
@@ -240,48 +262,71 @@ def train(
             try:
                 exec(code, {{"__builtins__": __builtins__}}, ns)
             except Exception:
-                print(json.dumps([]))
+                print(json.dumps({{"rewards": [], "crashed": {num_episodes}}}))
                 exit()
             if "select_action" not in ns:
-                print(json.dumps([]))
+                print(json.dumps({{"rewards": [], "crashed": {num_episodes}}}))
                 exit()
             fn = ns["select_action"]
             env = gym.make({repr(env_name)})
             n = int(env.action_space.n) if hasattr(env.action_space, "n") else 2
             results = []
+            crashed = 0
             for _ in range({num_episodes}):
                 obs, _ = env.reset()
                 total = 0.0
+                ep_crashed = False
                 for _ in range(500):
                     try:
                         a = int(fn(obs.tolist()))
                         a = a if 0 <= a < n else random.randint(0, n-1)
                     except Exception:
                         a = random.randint(0, n-1)
+                        ep_crashed = True
                     obs, r, term, trunc, _ = env.step(a)
                     total += r
                     if term or trunc:
                         break
                 results.append(total)
+                if ep_crashed:
+                    crashed += 1
             env.close()
-            print(json.dumps(results))
+            print(json.dumps({{"rewards": results, "crashed": crashed}}))
         """)
         try:
             result = subprocess.run(
                 [sys.executable, "-c", script],
                 capture_output=True, text=True, timeout=120,
             )
-            rewards = json.loads(result.stdout) if result.stdout.strip() else []
+            data = json.loads(result.stdout) if result.stdout.strip() else {}
+            rewards = data.get("rewards", [])
+            crashed = data.get("crashed", 0)
         except Exception:
             rewards = []
-        return sum(rewards) / len(rewards) if rewards else 0.0
+            crashed = num_episodes
+        mean = sum(rewards) / len(rewards) if rewards else 0.0
+        return mean, crashed
+
+    # Curriculum + reward config
+    ALPHA_START, ALPHA_END = 0.5, 0.15   # syntax weight: high early, low late
+    BETA_START, BETA_END = 0.5, 0.85     # env weight: low early, high late
+    ENV_EVAL_GATE = 0.4                   # min syntax score to try env rollouts
+    CRASH_PENALTY = -0.1                  # per crashed episode
+    total_dataset_steps = len(dataset)
+    step_counter = [0]
 
     def reward_fn(completions: list[str], **kwargs) -> list[float]:
         prompts = kwargs.get("prompts", [""] * len(completions))
         rewards = []
+
+        progress = min(step_counter[0] / max(total_dataset_steps, 1), 1.0)
+        step_counter[0] += 1
+
+        alpha = ALPHA_START + progress * (ALPHA_END - ALPHA_START)
+        beta = BETA_START + progress * (BETA_END - BETA_START)
+
         for i, code in enumerate(completions):
             prompt = prompts[i] if i < len(prompts) else ""
-            # Detect env
             detected_env = "CartPole-v1"
             for en in ENV_SPECS:
                 if en in prompt:
@@ -289,20 +334,26 @@ def train(
                     break
             spec = ENV_SPECS[detected_env]
 
-            r_syn = syntax_reward(code, spec["num_actions"])
-            if r_syn >= 1.0:
-                raw = env_reward(code, detected_env)
+            r_syn = syntax_reward(code, spec["num_actions"], obs_dim=spec.get("obs_dim", 4))
+
+            crashed = 0
+            raw = 0.0
+            if r_syn >= ENV_EVAL_GATE:
+                raw, crashed = env_reward(code, detected_env)
                 baseline, solved = spec["baseline"], spec["solved"]
                 r_env = max(0.0, min(1.0, (raw - baseline) / (solved - baseline)))
             else:
                 r_env = 0.0
-                raw = 0.0
 
-            total = 0.3 * r_syn + 0.7 * r_env
+            total = alpha * r_syn + beta * r_env
+            if crashed > 0:
+                total += CRASH_PENALTY * crashed
+            total = max(total, 0.0)
+
             rewards.append(total)
             if accumulator is not None:
                 accumulator.record(detected_env, total, r_syn, code)
-            print(f"  [{detected_env}] syn={r_syn:.1f} raw={raw:.1f} env={r_env:.2f} R={total:.3f}")
+            print(f"  [{detected_env}] syn={r_syn:.1f} raw={raw:.1f} env={r_env:.2f} R={total:.3f} crash={crashed} prog={progress:.2f}")
 
         return rewards
 
@@ -397,14 +448,14 @@ def train(
     # ---- GRPO Training ----
     grpo_config = GRPOConfig(
         output_dir=output_dir,
-        num_generations=4,
+        num_generations=8,
         learning_rate=5e-6,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         max_grad_norm=1.0,
         num_train_epochs=1,
         max_completion_length=512,
-        temperature=0.8,
+        temperature=1.0,
         logging_steps=1,
         save_steps=25,
         save_total_limit=5,
@@ -416,7 +467,7 @@ def train(
         model=model,
         processing_class=tokenizer,
         reward_funcs=reward_fn,
-        config=grpo_config,
+        args=grpo_config,
         train_dataset=dataset,
         callbacks=[dashboard_cb] if dashboard_cb else None,
     )

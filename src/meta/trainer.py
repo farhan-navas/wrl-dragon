@@ -59,25 +59,28 @@ def build_training_dataset(
     return Dataset.from_list(rows)
 
 
-def make_reward_fn(config: RewardConfig, accumulator: RewardAccumulator | None = None):
-    """Create the GRPO reward function.
+def make_reward_fn(
+    config: RewardConfig,
+    total_steps: int = 1,
+    accumulator: RewardAccumulator | None = None,
+):
+    """Create the GRPO reward function with curriculum scheduling.
 
-    GRPO calls this with a list of completions for a batch of prompts.
-    We score each completion on syntax + env performance.
+    Args:
+        config: Reward configuration (weights, baselines, penalties).
+        total_steps: Total training steps for curriculum progress calculation.
+        accumulator: Optional dashboard accumulator.
     """
+    # Mutable counter for curriculum progress tracking
+    step_counter = [0]
 
     def reward_fn(completions: list[str], **kwargs) -> list[float]:
-        """Score a batch of generated code completions.
-
-        Args:
-            completions: List of generated code strings.
-            **kwargs: Contains 'prompts' with the original prompts.
-
-        Returns:
-            List of scalar rewards, one per completion.
-        """
         prompts = kwargs.get("prompts", [""] * len(completions))
         rewards = []
+
+        # Curriculum progress: 0.0 at start → 1.0 at end
+        progress = min(step_counter[0] / max(total_steps, 1), 1.0)
+        step_counter[0] += 1
 
         for i, code in enumerate(completions):
             prompt = prompts[i] if i < len(prompts) else ""
@@ -86,13 +89,16 @@ def make_reward_fn(config: RewardConfig, accumulator: RewardAccumulator | None =
             env_name = _detect_env(prompt)
             spec = ENV_SPECS.get(env_name, {})
             num_actions = spec.get("num_actions", 2)
+            obs_dim = spec.get("obs_dim", 4)
 
-            # R_syntax (fast)
-            r_syntax = compute_syntax_reward(code, num_actions)
+            # R_syntax (fast) — uses correct obs_dim per env
+            r_syntax = compute_syntax_reward(code, num_actions, obs_dim=obs_dim)
 
-            # R_env (slow — only if syntax is valid)
-            if r_syntax >= 1.0:
-                raw_reward, episodes = compute_env_reward(
+            # R_env (slow — gate lowered to 0.4 for partial credit)
+            crashed = 0
+            raw_reward = 0.0
+            if r_syntax >= config.env_eval_gate:
+                raw_reward, episodes, crashed = compute_env_reward(
                     code, env_name,
                     num_episodes=5,
                     max_steps=500,
@@ -101,17 +107,19 @@ def make_reward_fn(config: RewardConfig, accumulator: RewardAccumulator | None =
             else:
                 r_env = 0.0
 
-            total = compute_total_reward(r_syntax, r_env, config)
+            total = compute_total_reward(
+                r_syntax, r_env, config,
+                progress=progress,
+                crashed_episodes=crashed,
+            )
             rewards.append(total)
 
-            # Record to accumulator for dashboard
             if accumulator is not None:
                 accumulator.record(env_name, total, r_syntax, code)
 
-            # Log for visibility
             print(
-                f"  [{env_name}] syntax={r_syntax:.1f} env={r_env:.2f} "
-                f"total={total:.3f} | {code[:60].replace(chr(10), ' ')}..."
+                f"  [{env_name}] syn={r_syntax:.1f} raw={raw_reward:.1f} "
+                f"env={r_env:.2f} R={total:.3f} crash={crashed} prog={progress:.2f}"
             )
 
         return rewards
@@ -144,7 +152,9 @@ def create_trainer(
         best_policies,
     )
 
-    reward_fn = make_reward_fn(config.reward, accumulator)
+    # Total steps for curriculum scheduling
+    total_steps = len(dataset) // max(config.train.per_device_train_batch_size, 1)
+    reward_fn = make_reward_fn(config.reward, total_steps=total_steps, accumulator=accumulator)
 
     grpo_config = GRPOConfig(
         output_dir=config.output_dir,
