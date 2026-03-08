@@ -82,6 +82,24 @@ const AnimationFactory = {
             }
         });
 
+        // ── Training events (Phase 2 meta-training) ──
+
+        this.register("training_started", (ctx) => {
+            if (typeof TrainingView !== "undefined") TrainingView.onTrainingStarted(ctx);
+        });
+
+        this.register("training_step", (ctx) => {
+            if (typeof TrainingView !== "undefined") TrainingView.onTrainingStep(ctx);
+        });
+
+        this.register("training_checkpoint", (ctx) => {
+            if (typeof TrainingView !== "undefined") TrainingView.onTrainingCheckpoint(ctx);
+        });
+
+        this.register("training_completed", (ctx) => {
+            if (typeof TrainingView !== "undefined") TrainingView.onTrainingCompleted(ctx);
+        });
+
         // ── Demo-only animations (scripted sequence) ──
 
         this.register("demo_ceo_thinking", () => {
