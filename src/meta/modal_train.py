@@ -18,33 +18,55 @@ app = modal.App("wrl-dragon-meta-train")
 vol = modal.Volume.from_name("wrl-dragon-training", create_if_missing=True)
 
 # Container image with all dependencies
-# Use CUDA-devel base so nvcc is available for flash-attn compilation
+# Prebuilt flash-attn wheel avoids 15+ min compilation and CUDA devel image
+FLASH_ATTN_WHEEL = (
+    "https://github.com/lesj0610/flash-attention/releases/download/"
+    "v2.8.3-cu12-torch2.10-cp312/"
+    "flash_attn-2.8.3+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+)
+
 image = (
-    modal.Image.from_registry(
-        "nvidia/cuda:12.4.1-devel-ubuntu22.04",
-        add_python="3.11",
-    )
+    modal.Image.debian_slim(python_version="3.12")
     .apt_install("git", "swig")
+    .pip_install("torch>=2.10.0", "packaging", "numpy>=1.26.0", "einops")
+    .run_commands(f"pip install '{FLASH_ATTN_WHEEL}' 2>/dev/null || true")
     .pip_install(
-        # flash-attn build deps (setup_requires + imports in setup.py)
-        "pip>=24.0", "setuptools", "wheel",
-        "packaging", "ninja", "psutil",
-        "numpy>=1.26.0", "einops",
-    )
-    .pip_install("torch>=2.6.0")
-    .pip_install(
-        "flash-attn>=2.6.3",
-        extra_options="--no-build-isolation",
-    )
-    .pip_install(
-        "unsloth[cu124-ampere-torch260]",
-        "trl>=0.17.0",
-        "datasets>=3.0.0",
+        # unsloth + unsloth_zoo runtime deps (installed explicitly since
+        # unsloth itself is installed with --no-deps to avoid torch conflicts)
+        "trl>=0.18.2,<=0.24.0",
+        "transformers>=4.51.3,<=5.2.0",
+        "datasets>=3.4.1,<4.4.0",
+        "accelerate>=0.34.1",
+        "peft>=0.18.0",
+        "huggingface_hub[hf_xet]>=0.34.0",
+        "hf_transfer",
+        "sentencepiece>=0.2.0",
+        "protobuf",
+        "torchvision",
+        "torchao>=0.13.0",
+        "triton>=3.0.0",
+        "pillow",
+        "psutil",
+        "tyro",
+        "regex",
+        "msgspec",
+        "cut_cross_entropy",
+        "xformers",
+        "bitsandbytes>=0.45.5",
+        "scipy",
+        "safetensors",
+        "tokenizers",
+        "filelock",
+        "typing_extensions",
+        "diffusers",
+        "sentence-transformers",
+        # project deps
         "gymnasium[box2d]>=1.0.0",
         "pydantic>=2.0.0",
         "httpx>=0.27.0",
     )
-    .env({"HF_HOME": "/vol/hf_cache"})
+    .run_commands("pip install --no-deps unsloth unsloth_zoo")
+    .env({"HF_HOME": "/vol/hf_cache", "HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
 
@@ -76,7 +98,7 @@ def train(
     print("=" * 60)
     print("WRL-DRAGON Phase 2: RL^2 Meta-Training (Modal H200)")
     print(f"  GPU: {torch.cuda.get_device_name()}")
-    print(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+    print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print(f"  Envs: {envs}")
     print(f"  Iterations: {iterations}")
     print("=" * 60)
