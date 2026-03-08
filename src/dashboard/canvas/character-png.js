@@ -7,19 +7,23 @@ const CharacterPngSprites = {
     STRIPS: ["idle", "idle_anim", "run", "sit", "sit2", "sit3", "phone"],
 
     // Frame counts for the down-facing direction
-    // idle has 1 frame per direction (4 total) — use only frame 0
-    // idle_anim has 6 frames per direction (24 total) — use first 6 for down
-    // run/sit/sit2 have 6 per direction (24 total) — first 6 = down
-    // sit3 has 6 per direction (12 total) — first 6 = down
-    // phone has 9 frames (single direction or 3x3)
+    // Strips at 16px frame width: idle, idle_anim, run, phone
+    // Strips at 32px frame width: sit, sit2, sit3 (wider sitting poses)
     FRAME_COUNTS: {
-        idle: 1,        // 4 total but each is a different direction — only use frame 0
-        idle_anim: 6,   // 24 total, first 6 = down-facing breathing
-        run: 6,         // 24 total, first 6 = down-facing walk
-        sit: 6,         // 24 total, first 6 = down-facing typing
-        sit2: 6,        // 24 total, first 6 = down-facing alt
-        sit3: 6,        // 12 total, first 6 = down-facing gesture
-        phone: 9,       // 9 frames
+        idle: 1,        // 4 frames@16px, 1 per direction
+        idle_anim: 6,   // 24 frames@16px, 6 per direction — first 6 = down
+        run: 6,         // 24 frames@16px, 6 per direction — first 6 = down
+        sit: 3,         // 12 frames@32px, 3 per direction — first 3 = down
+        sit2: 3,        // 12 frames@32px, 3 per direction — first 3 = down
+        sit3: 3,        // 6 frames@32px, 3 per direction — first 3 = down
+        phone: 9,       // 9 frames@16px, single direction
+    },
+
+    // Frame pixel width per strip (default TILE_W=16 for most, 32 for sit strips)
+    FRAME_WIDTHS: {
+        sit: 32,
+        sit2: 32,
+        sit3: 32,
     },
 
     images: {},  // { Alex: { idle: Image, run: Image, ... }, ... }
@@ -57,12 +61,13 @@ const CharacterPngSprites = {
 
         const maxFrames = this.FRAME_COUNTS[stripName] || 4;
         const frame = frameIndex % maxFrames;
+        const frameW = this.FRAME_WIDTHS[stripName] || this.TILE_W;
 
         return {
             image: img,
-            sx: frame * this.TILE_W,
+            sx: frame * frameW,
             sy: 0,
-            sw: this.TILE_W,
+            sw: frameW,
             sh: this.TILE_H,
         };
     }

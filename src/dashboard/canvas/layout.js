@@ -45,18 +45,18 @@ const Layout = {
 
     deskPositions: {
         ceo: [
-            { x: 250, y: 140, label: "CEO" },
-            { x: 550, y: 140, label: "Analyst" },
+            { x: 250, y: 150, label: "CEO" },
+            { x: 550, y: 150, label: "Analyst" },
         ],
         coder: [
-            { x: 150, y: 310 },
-            { x: 400, y: 310 },
-            { x: 650, y: 310 },
+            { x: 150, y: 320 },
+            { x: 400, y: 320 },
+            { x: 650, y: 320 },
         ],
         qa: [
-            { x: 150, y: 478 },
-            { x: 400, y: 478 },
-            { x: 650, y: 478 },
+            { x: 150, y: 490 },
+            { x: 400, y: 490 },
+            { x: 650, y: 490 },
         ],
     },
 
@@ -87,22 +87,28 @@ const Layout = {
         ctx.fillStyle = "#0d0d20";
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw each tier
-        for (const [tierKey, floor] of Object.entries(this.floors)) {
-            this._drawFloorTiles(ctx, tierKey, floor);
-            this._drawWallStrip(ctx, tierKey, floor);
+        // Try tile-based rendering first
+        const usedTiles = OfficeTiles.renderAll(ctx, this.floors);
+
+        if (!usedTiles) {
+            // Fallback: procedural rendering if tilesets not loaded
+            for (const [tierKey, floor] of Object.entries(this.floors)) {
+                this._drawFloorTiles(ctx, tierKey, floor);
+                this._drawWallStrip(ctx, tierKey, floor);
+            }
+            // Procedural furniture
+            for (const [tier, desks] of Object.entries(this.deskPositions)) {
+                for (const desk of desks) {
+                    this._drawDeskSetup(ctx, desk.x, desk.y, tier, desk.label);
+                }
+            }
+            this._drawDecorations(ctx);
+        }
+
+        // Tier labels (always draw on top)
+        for (const floor of Object.values(this.floors)) {
             this._drawTierLabel(ctx, floor);
         }
-
-        // Draw furniture at desks
-        for (const [tier, desks] of Object.entries(this.deskPositions)) {
-            for (const desk of desks) {
-                this._drawDeskSetup(ctx, desk.x, desk.y, tier, desk.label);
-            }
-        }
-
-        // Decorations
-        this._drawDecorations(ctx);
 
         // Tier borders
         ctx.strokeStyle = "#333";
