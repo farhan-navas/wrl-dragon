@@ -25,7 +25,12 @@ image = (
         add_python="3.11",
     )
     .apt_install("git", "swig")
-    .pip_install("pip>=24.0", "setuptools", "wheel", "packaging", "ninja", "numpy>=1.26.0")
+    .pip_install(
+        # flash-attn build deps (setup_requires + imports in setup.py)
+        "pip>=24.0", "setuptools", "wheel",
+        "packaging", "ninja", "psutil",
+        "numpy>=1.26.0", "einops",
+    )
     .pip_install("torch>=2.6.0")
     .pip_install(
         "flash-attn>=2.6.3",
