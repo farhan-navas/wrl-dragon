@@ -1,14 +1,15 @@
-"""Modal deployment for RL^2 meta-training on H200 GPU.
+"""Modal deployment for RL^2 meta-training on H100 GPU.
 
 Usage:
     modal run src/meta/modal_train.py
     modal run src/meta/modal_train.py --envs CartPole-v1 --iterations 50
+    modal run src/meta/modal_train.py --gym-space-url https://USER-wrl-dragon-gym.hf.space
 
-The training runs on a single H200 (141GB VRAM) with:
-- Qwen3-Coder-30B-A3B-Instruct (MoE: 30B total, 3B active)
-- 16-bit LoRA via Unsloth (~642M trainable params)
+Runs on a single H100 (80GB VRAM) with:
+- Qwen3-Coder-30B-A3B-Instruct (MoE: 30B total, 3B active) in bf16
+- LoRA via PEFT (no quantization, no Unsloth)
 - GRPO from TRL for policy gradient optimization
-- Gym rollouts run in the same container (no separate server needed)
+- Gym rollouts via HF Space (fallback: local subprocess)
 """
 import modal
 
@@ -17,8 +18,7 @@ app = modal.App("wrl-dragon-meta-train")
 # Persistent volume for checkpoints + model cache
 vol = modal.Volume.from_name("wrl-dragon-training", create_if_missing=True)
 
-# Container image with all dependencies
-# Prebuilt flash-attn wheel avoids 15+ min compilation and CUDA devel image
+# Prebuilt flash-attn wheel avoids 15+ min compilation
 FLASH_ATTN_WHEEL = (
     "https://github.com/lesj0610/flash-attention/releases/download/"
     "v2.8.3-cu12-torch2.10-cp312/"
@@ -28,11 +28,9 @@ FLASH_ATTN_WHEEL = (
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git", "swig")
-    .pip_install("torch>=2.10.0", "packaging", "numpy>=1.26.0", "einops")
+    .pip_install("torch>=2.10.0", "packaging", "numpy>=1.26.0")
     .run_commands(f"pip install '{FLASH_ATTN_WHEEL}' 2>/dev/null || true")
     .pip_install(
-        # unsloth + unsloth_zoo runtime deps (installed explicitly since
-        # unsloth itself is installed with --no-deps to avoid torch conflicts)
         "trl>=0.18.2,<=0.24.0",
         "transformers>=4.51.3,<=5.2.0",
         "datasets>=3.4.1,<4.4.0",
@@ -42,30 +40,13 @@ image = (
         "hf_transfer",
         "sentencepiece>=0.2.0",
         "protobuf",
-        "torchvision",
-        "torchao>=0.13.0",
-        "triton>=3.0.0",
-        "pillow",
-        "psutil",
-        "tyro",
-        "regex",
-        "msgspec",
-        "cut_cross_entropy",
-        "xformers",
-        "bitsandbytes>=0.45.5",
-        "scipy",
         "safetensors",
         "tokenizers",
-        "filelock",
-        "typing_extensions",
-        "diffusers",
-        "sentence-transformers",
         # project deps
         "gymnasium[box2d]>=1.0.0",
         "pydantic>=2.0.0",
         "httpx>=0.27.0",
     )
-    .run_commands("pip install --no-deps unsloth unsloth_zoo")
     .env({"HF_HOME": "/vol/hf_cache", "HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
@@ -74,57 +55,59 @@ image = (
     image=image,
     gpu="H100",
     volumes={"/vol": vol},
-    timeout=4 * 3600,  # 4 hour max
+    timeout=4 * 3600,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 def train(
     envs: list[str] = ["CartPole-v1", "LunarLander-v3"],
     iterations: int = 200,
     webhook: str | None = None,
+    gym_space_url: str | None = None,
 ):
-    """Run the full GRPO meta-training loop on an H200."""
+    """Run the full GRPO meta-training loop on an H100."""
     import json
     import time
     from pathlib import Path
 
     import torch
-    from unsloth import FastLanguageModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import LoraConfig, get_peft_model
     from datasets import Dataset
     from trl import GRPOConfig, GRPOTrainer
-
-    # Patch torch._grouped_mm to handle mixed dtypes (float32 inputs + bf16 weights)
-    # caused by gradient checkpointing recomputation dropping autocast context
-    if hasattr(torch, "_grouped_mm"):
-        _orig_grouped_mm = torch._grouped_mm
-        def _patched_grouped_mm(inputs, weight, **kwargs):
-            if inputs.dtype != weight.dtype:
-                inputs = inputs.to(weight.dtype)
-            return _orig_grouped_mm(inputs, weight, **kwargs)
-        torch._grouped_mm = _patched_grouped_mm
 
     output_dir = "/vol/outputs/meta"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("WRL-DRAGON Phase 2: RL^2 Meta-Training (Modal H200)")
+    print("WRL-DRAGON: RL^2 Meta-Training (Modal H100)")
     print(f"  GPU: {torch.cuda.get_device_name()}")
     print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print(f"  Envs: {envs}")
     print(f"  Iterations: {iterations}")
+    print(f"  Gym Space: {gym_space_url or 'disabled (subprocess fallback)'}")
     print("=" * 60)
 
-    # ---- Load model ----
-    model_id = "unsloth/Qwen3-Coder-30B-A3B-Instruct"
+    # ---- Load model (bf16, no quantization) ----
+    model_id = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
     t0 = time.time()
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_id,
-        max_seq_length=2048,
-        dtype=torch.bfloat16,
-        load_in_4bit=True,
-        fast_inference=False,
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer.padding_side = "right"
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        attn_implementation="flash_attention_2",
     )
-    model = FastLanguageModel.get_peft_model(
-        model,
+    model.config.pad_token_id = tokenizer.pad_token_id
+
+    # LoRA via PEFT
+    lora_config = LoraConfig(
         r=16,
         lora_alpha=16,
         target_modules=[
@@ -133,16 +116,17 @@ def train(
         ],
         lora_dropout=0,
         bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=42,
+        task_type="CAUSAL_LM",
     )
+    model = get_peft_model(model, lora_config)
+    model.warnings_issued = {}
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
     print(f"Model loaded in {time.time() - t0:.1f}s")
+    print(f"  pad_token_id={tokenizer.pad_token_id}")
+    model.print_trainable_parameters()
 
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  {trainable:,} trainable / {total:,} total ({trainable/total*100:.2f}%)")
-
-    # ---- Environment specs (enriched with strategy hints) ----
+    # ---- Environment specs ----
     ENV_SPECS = {
         "CartPole-v1": {
             "obs_dim": 4, "num_actions": 2,
@@ -172,7 +156,7 @@ def train(
                 "obs=[cos(t1), sin(t1), cos(t2), sin(t2), dt1, dt2]. dt1 in [-12.57,12.57], dt2 in [-28.27,28.27]. "
                 "Action 0=neg, 1=none, 2=pos torque. Swing tip above line.\n"
                 "Heuristic: apply torque in direction of angular velocity (pump like a swing). When dt1 > 0, positive torque.\n"
-                "Failure: max 500 steps, reward=-1/step. Random policy ≈ -500."
+                "Failure: max 500 steps, reward=-1/step. Random policy ~ -500."
             ),
         },
         "MountainCar-v0": {
@@ -210,10 +194,6 @@ def train(
             prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
             )
-            # Close Qwen3's thinking block so the model generates code
-            # directly — prevents 6 extra thinking tokens that cause
-            # Unsloth's completion_mask shape mismatch
-            prompt += "</think>\n\n"
             rows.append({"prompt": prompt, "env_name": env_name})
 
     random.shuffle(rows)
@@ -226,6 +206,10 @@ def train(
     import subprocess
     import sys
     import textwrap
+
+    def strip_thinking(text: str) -> str:
+        """Remove <think>...</think> blocks from model output."""
+        return re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
 
     def syntax_reward(code: str, num_actions: int, obs_dim: int = 4) -> float:
         """7-tier syntax scoring for finer gradient signal."""
@@ -253,12 +237,69 @@ def train(
             return 0.6
 
     def env_reward(code: str, env_name: str, num_episodes: int = 5) -> tuple[float, int]:
-        """Run policy in gym, return (mean_reward, crashed_count)."""
+        """Run policy in gym. Try HF Space first, fall back to subprocess."""
         clean = re.sub(r"^```(?:python)?\s*\n?", "", code.strip())
         clean = re.sub(r"\n?```\s*$", "", clean.strip())
         if "def select_action" in clean:
             clean = clean[clean.index("def select_action"):]
 
+        # ---- Try HF Space (OpenEnv protocol: /reset + /step) ----
+        if gym_space_url:
+            try:
+                import httpx
+                ns = {}
+                exec(clean, {"__builtins__": __builtins__}, ns)
+                fn = ns.get("select_action")
+                if fn is None or not callable(fn):
+                    raise ValueError("No select_action in code")
+
+                spec = ENV_SPECS.get(env_name, ENV_SPECS["CartPole-v1"])
+                n_actions = spec["num_actions"]
+                base = gym_space_url.rstrip("/")
+                client = httpx.Client(timeout=30.0)
+                rewards_list = []
+                crashed = 0
+
+                for _ in range(num_episodes):
+                    resp = client.post(f"{base}/reset", json={})
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"reset failed: {resp.status_code}")
+                    obs_data = resp.json()
+                    obs = obs_data.get("observation", {}).get("obs", [])
+                    total = 0.0
+                    ep_crashed = False
+
+                    for _ in range(500):
+                        try:
+                            a = int(fn(obs))
+                            a = a if 0 <= a < n_actions else random.randint(0, n_actions - 1)
+                        except Exception:
+                            a = random.randint(0, n_actions - 1)
+                            ep_crashed = True
+
+                        resp = client.post(f"{base}/step", json={"action": {"value": a}})
+                        if resp.status_code != 200:
+                            break
+                        step_data = resp.json()
+                        obs_info = step_data.get("observation", {})
+                        r = obs_info.get("reward", 0.0)
+                        done = obs_info.get("done", False)
+                        total += r
+                        obs = obs_info.get("obs", [])
+                        if done:
+                            break
+
+                    rewards_list.append(total)
+                    if ep_crashed:
+                        crashed += 1
+
+                client.close()
+                mean = sum(rewards_list) / len(rewards_list) if rewards_list else 0.0
+                return mean, crashed
+            except Exception as e:
+                print(f"  HF Space rollout failed ({e}), falling back to subprocess")
+
+        # ---- Fallback: local subprocess ----
         script = textwrap.dedent(f"""\
             import json, random, gymnasium as gym
             code = {repr(clean)}
@@ -319,7 +360,7 @@ def train(
     total_dataset_steps = len(dataset)
     step_counter = [0]
 
-    def reward_fn(completions: list[str], **kwargs) -> list[float]:
+    def reward_fn(completions, **kwargs) -> list[float]:
         prompts = kwargs.get("prompts", [""] * len(completions))
         rewards = []
 
@@ -329,8 +370,22 @@ def train(
         alpha = ALPHA_START + progress * (ALPHA_END - ALPHA_START)
         beta = BETA_START + progress * (BETA_END - BETA_START)
 
-        for i, code in enumerate(completions):
-            prompt = prompts[i] if i < len(prompts) else ""
+        for i, completion in enumerate(completions):
+            # Handle both string and conversation-dict formats
+            if isinstance(completion, list):
+                raw_code = completion[-1]["content"] if completion else ""
+            elif isinstance(completion, dict):
+                raw_code = completion.get("content", str(completion))
+            else:
+                raw_code = str(completion)
+            code = strip_thinking(raw_code)
+            prompt_raw = prompts[i] if i < len(prompts) else ""
+            if isinstance(prompt_raw, list):
+                prompt = " ".join(m.get("content", "") for m in prompt_raw)
+            elif isinstance(prompt_raw, dict):
+                prompt = prompt_raw.get("content", str(prompt_raw))
+            else:
+                prompt = str(prompt_raw)
             detected_env = "CartPole-v1"
             for en in ENV_SPECS:
                 if en in prompt:
@@ -412,8 +467,7 @@ def train(
                 self._env_rewards, self._syntax_scores, self._best_code, self._count = {}, [], {}, 0
                 return result
 
-        from transformers import TrainerCallback, TrainerControl, TrainerState
-        from transformers.training_args import TrainingArguments as _TA
+        from transformers import TrainerCallback
 
         emitter = _SimpleEmitter(webhook)
         accumulator = _Accumulator()
@@ -452,7 +506,7 @@ def train(
     # ---- GRPO Training ----
     grpo_config = GRPOConfig(
         output_dir=output_dir,
-        num_generations=8,
+        num_generations=4,
         learning_rate=5e-6,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
@@ -489,14 +543,17 @@ def train(
     model.save_pretrained(final_path)
     tokenizer.save_pretrained(final_path)
 
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
     summary = {
         "model": model_id,
         "envs": envs,
         "iterations": iterations,
         "elapsed_min": elapsed / 60,
         "loss": result.training_loss,
-        "trainable": trainable,
-        "total": total,
+        "trainable": trainable_params,
+        "total": total_params,
     }
     Path(f"{output_dir}/summary.json").write_text(json.dumps(summary, indent=2))
 
@@ -511,11 +568,13 @@ def main(
     envs: str = "CartPole-v1,LunarLander-v3",
     iterations: int = 200,
     webhook: str = "",
+    gym_space_url: str = "",
 ):
     env_list = [e.strip() for e in envs.split(",")]
     result = train.remote(
         envs=env_list,
         iterations=iterations,
         webhook=webhook or None,
+        gym_space_url=gym_space_url or None,
     )
     print(f"\nTraining complete: {result}")

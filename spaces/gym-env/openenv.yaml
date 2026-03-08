@@ -1,0 +1,6 @@
+spec_version: 1
+name: gym_wrapper
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000

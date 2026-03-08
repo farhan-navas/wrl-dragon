@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-gym-wrapper"
+version = "0.1.0"
+description = "Gymnasium environment wrapper for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git@v0.2.1",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "gymnasium[box2d]>=0.29.0",
+    "numpy>=1.24.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+server = "gym_wrapper.server.app:main"
+
+[tool.setuptools]
+packages = ["gym_wrapper", "gym_wrapper.server"]
+package-dir = {"gym_wrapper" = ".", "gym_wrapper.server" = "server"}
