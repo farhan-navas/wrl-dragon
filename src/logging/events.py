@@ -10,11 +10,15 @@ from pydantic import BaseModel, Field
 EVENTS_LOG_PATH = Path("outputs/logs/events.jsonl")
 
 EventType = Literal[
+    "run_started",
     "agent_spawned",
     "task_assigned",
     "rollout_started",
     "rollout_completed",
     "reward_update",
+    # Orchestrator narrative events
+    "phase_change",
+    "insight",
     # Phase 2: training events
     "training_started",
     "training_step",
@@ -53,6 +57,13 @@ class Event(BaseModel):
     # agent status
     status: str | None = None
     current_task: str | None = None
+
+    # phase_change / insight
+    phase: str | None = None
+    round_num: int | None = None
+    total_rounds: int | None = None
+    message: str | None = None
+    source: str | None = None  # which agent produced the insight
 
     # training events (Phase 2)
     iteration: int | None = None
