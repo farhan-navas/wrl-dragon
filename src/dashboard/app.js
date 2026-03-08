@@ -4,6 +4,9 @@ const App = {
         agents: [],
         events: [],
     },
+    _demoTimer: null,
+    _demoStep: 0,
+    _realEventsReceived: false,
 
     init() {
         // Initialize canvas renderer
@@ -34,6 +37,18 @@ const App = {
         { id: "qa-2", tier: "qa", name: "QA-2" },
     ],
 
+    DEMO_SEQUENCE: [
+        { key: "demo_ceo_thinking" },
+        { key: "demo_ceo_assigns_coder" },
+        { key: "demo_coders_coding" },
+        { key: "demo_coder_assigns_qa", context: { from: "coder-1", to: "qa-1" } },
+        { key: "demo_coder_assigns_qa", context: { from: "coder-2", to: "qa-2" } },
+        { key: "demo_qa_running" },
+        { key: "demo_qa_running_mid" },
+        { key: "demo_qa_reports" },
+        { key: "demo_reset" },
+    ],
+
     async loadAgents() {
         let agents = [];
         try {
@@ -50,86 +65,47 @@ const App = {
                 Renderer.addAgent(agent);
             }
         }
+
+        // Start demo simulation if using demo agents
+        if (agents.length === 0) {
+            this._startDemoSimulation();
+        }
+    },
+
+    _startDemoSimulation() {
+        if (this._demoTimer) return;
+
+        this._demoStep = 0;
+        this._demoTimer = setInterval(() => {
+            if (this._realEventsReceived) {
+                this._stopDemoSimulation();
+                return;
+            }
+            const step = this.DEMO_SEQUENCE[this._demoStep];
+            AnimationFactory.run(step.key, step.context || {});
+            this._demoStep = (this._demoStep + 1) % this.DEMO_SEQUENCE.length;
+        }, 3000);
+    },
+
+    _stopDemoSimulation() {
+        if (this._demoTimer) {
+            clearInterval(this._demoTimer);
+            this._demoTimer = null;
+        }
     },
 
     handleEvent(event) {
+        // Stop demo simulation when real events arrive
+        if (!this._realEventsReceived) {
+            this._realEventsReceived = true;
+            this._stopDemoSimulation();
+        }
+
         // Add to event log
         this.addEventToLog(event);
 
-        switch (event.type) {
-            case "agent_spawned":
-                this.onAgentSpawned(event);
-                break;
-            case "task_assigned":
-                this.onTaskAssigned(event);
-                break;
-            case "rollout_started":
-                this.onRolloutStarted(event);
-                break;
-            case "rollout_completed":
-                this.onRolloutCompleted(event);
-                break;
-            case "reward_update":
-                this.onRewardUpdate(event);
-                break;
-        }
-    },
-
-    onAgentSpawned(event) {
-        if (!Renderer.getAgent(event.agent_id)) {
-            Renderer.addAgent({
-                id: event.agent_id,
-                tier: event.tier,
-                env: event.env,
-                name: event.agent_id,
-            });
-        }
-        Renderer.showSpeechBubble(event.agent_id, "Ready!", 2000);
-    },
-
-    onTaskAssigned(event) {
-        const fromId = event.from;
-        const toId = event.to;
-
-        Renderer.setAgentState(fromId, "assigning");
-        Renderer.showSpeechBubble(fromId, event.task || "New task", 3000);
-        Renderer.addTaskLine(fromId, toId);
-
-        // Target agent starts working
-        const toAgent = Renderer.getAgent(toId);
-        if (toAgent) {
-            if (toAgent.tier === "coder") {
-                Renderer.setAgentState(toId, "coding");
-            } else {
-                Renderer.setAgentState(toId, "thinking");
-            }
-            Renderer.showSpeechBubble(toId, "On it!", 2000);
-        }
-
-        // Reset assigner after delay
-        setTimeout(() => Renderer.setAgentState(fromId, "thinking"), 3000);
-    },
-
-    onRolloutStarted(event) {
-        Renderer.setAgentState(event.agent_id, "running");
-        Renderer.showSpeechBubble(event.agent_id, `Run: ${event.run_id}`, 2000);
-        RewardChart.resetLiveData();
-    },
-
-    onRolloutCompleted(event) {
-        Renderer.setAgentState(event.agent_id, "reporting");
-        Renderer.showSpeechBubble(
-            event.agent_id,
-            `R:${event.total_reward?.toFixed(0) || "?"} / ${event.steps || "?"}s`,
-            4000
-        );
-
-        // Flash effect
-        setTimeout(() => Renderer.setAgentState(event.agent_id, "idle"), 4000);
-    },
-
-    onRewardUpdate(event) {
-        RewardChart.addPoint(event.step, event.reward, event.cumulative);
+        // Run animation via factory
+        AnimationFactory.run(event.type, event);
     },
 
     onAgentClick(agent) {
